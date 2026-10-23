@@ -2,7 +2,7 @@ import os
 import json
 import ccxt
 import pandas as pd
-import pandas_ta as ta
+import ta
 import threading
 from flask import Flask
 from telegram import Update
@@ -30,7 +30,6 @@ def health_check():
     return "Bot is running", 200
 
 def run_flask():
-    # Render PORT environment variable deta hai
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -88,17 +87,18 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📡 **Status**\nActive Trades: {len(active_trades)}\nSource: Binance\nStatus: Running")
 
 # ==========================================
-# 5. SIGNAL ENGINE (EMA + ADX + ROC)
+# 5. SIGNAL ENGINE (EMA + ADX + ROC) - UPDATED WITH 'ta' LIB
 # ==========================================
 def check_signal(symbol, timeframe):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=100)
         df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
         
-        df['EMA9'] = ta.ema(df['close'], length=9)
-        df['EMA21'] = ta.ema(df['close'], length=21)
-        df['ADX'] = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
-        df['ROC'] = ta.roc(df['close'], length=9)
+        # ta library ka istemal
+        df['EMA9'] = ta.trend.EMAIndicator(close=df['close'], window=9).ema_indicator()
+        df['EMA21'] = ta.trend.EMAIndicator(close=df['close'], window=21).ema_indicator()
+        df['ADX'] = ta.trend.ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx()
+        df['ROC'] = ta.momentum.ROCIndicator(close=df['close'], window=9).roc()
         
         current_close = df['close'].iloc[-1]
         current_ema9 = df['EMA9'].iloc[-1]
