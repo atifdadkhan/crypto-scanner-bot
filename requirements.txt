@@ -1,0 +1,4 @@
+python-telegram-bot
+ccxt
+pandas
+pandas_ta
