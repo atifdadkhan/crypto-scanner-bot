@@ -11,12 +11,17 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # ==========================================
 # 1. CONFIGURATION (Token & Chat ID)
 # ==========================================
+# Aapka Token aur Chat ID yahan add hai
 TELEGRAM_TOKEN = "8664137345:AAF7ROx4_6PSTHYPKop-Ytf73CQB2Ekw_2g"
 YOUR_CHAT_ID = 6620183989 
 
 LEVERAGE = 10 
 STATE_FILE = "trades.json"
-exchange = ccxt.binance() 
+
+# Bitget Exchange Connected (Ab data Bitget se aayega)
+exchange = ccxt.bitget() 
+
+# Top 10 Strong Coins
 tracked_coins = [
     'BTC/USDT',   # Bitcoin
     'ETH/USDT',   # Ethereum
@@ -60,11 +65,17 @@ def save_state(state):
 active_trades = load_state()
 
 # ==========================================
-# 4. TELEGRAM COMMANDS
+# 4. ERROR HANDLER
+# ==========================================
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(f"⚠️ Error occurred: {context.error}")
+
+# ==========================================
+# 5. TELEGRAM COMMANDS
 # ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 **Crypto Scanner Bot Active!**\n\n"
-                                    "Main aapko Spot aur Futures ke signals bhejunga.\n"
+                                    "Main aapko Bitget ke data par Spot aur Futures ke signals bhejunga.\n"
                                     "/list, /add, /remove, /status")
 
 async def list_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -95,17 +106,16 @@ async def remove_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: /remove BTC/USDT")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"📡 **Status**\nActive Trades: {len(active_trades)}\nSource: Binance\nStatus: Running")
+    await update.message.reply_text(f"📡 **Status**\nActive Trades: {len(active_trades)}\nSource: Bitget\nStatus: Running")
 
 # ==========================================
-# 5. SIGNAL ENGINE (EMA + ADX + ROC) - UPDATED WITH 'ta' LIB
+# 6. SIGNAL ENGINE (EMA + ADX + ROC)
 # ==========================================
 def check_signal(symbol, timeframe):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=100)
         df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
         
-        # ta library ka istemal
         df['EMA9'] = ta.trend.EMAIndicator(close=df['close'], window=9).ema_indicator()
         df['EMA21'] = ta.trend.EMAIndicator(close=df['close'], window=21).ema_indicator()
         df['ADX'] = ta.trend.ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx()
@@ -133,7 +143,7 @@ def check_signal(symbol, timeframe):
         return "ERROR", 0
 
 # ==========================================
-# 6. BACKGROUND SCANNER
+# 7. BACKGROUND SCANNER & ALERTS
 # ==========================================
 async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     global active_trades
@@ -155,7 +165,7 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                 save_state(active_trades)
                 await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"⚠️ **SPOT EXIT: {coin}**\n⏱ {tf}\n💵 {price}")
 
-            # Spot Profit
+            # Spot Profit Booking
             if spot_id in active_trades:
                 entry = active_trades[spot_id]["entry"]
                 pct = ((price - entry) / entry) * 100
@@ -165,18 +175,20 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                         save_state(active_trades)
                         await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"🎯 **SPOT PROFIT: {coin} (+{target}%)**\nPrice: {price}")
 
-            # Futures
+            # Futures LONG
             fut_id = f"{coin}_{tf}_FUT"
             if status == "BUY" and fut_id not in active_trades:
                 active_trades[fut_id] = {"entry": price, "type": "LONG", "hit20": False, "hit30": False, "hit50": False}
                 save_state(active_trades)
                 await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"🚀 **FUTURES LONG: {coin}**\n⏱ {tf}\n💵 {price}\n⚠️ Est. ROI (10x): 20% | 30% | 50%")
             
+            # Futures SHORT
             if status == "SELL" and f"{fut_id}_SHORT" not in active_trades:
                 active_trades[f"{fut_id}_SHORT"] = {"entry": price, "type": "SHORT", "hit20": False, "hit30": False, "hit50": False}
                 save_state(active_trades)
                 await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"🔴 **FUTURES SHORT: {coin}**\n⏱ {tf}\n💵 {price}\n⚠️ Est. ROI (10x): 20% | 30% | 50%")
 
+            # Futures LONG Profit
             if fut_id in active_trades:
                 entry = active_trades[fut_id]["entry"]
                 roi = ((price - entry) / entry) * 100 * LEVERAGE
@@ -186,6 +198,7 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                         save_state(active_trades)
                         await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"💰 **FUTURES LONG: {coin} (+{target}% ROI)**\nPrice: {price}")
             
+            # Futures SHORT Profit
             if f"{fut_id}_SHORT" in active_trades:
                 entry = active_trades[f"{fut_id}_SHORT"]["entry"]
                 roi = ((entry - price) / entry) * 100 * LEVERAGE
@@ -196,23 +209,25 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"💰 **FUTURES SHORT: {coin} (+{target}% ROI)**\nPrice: {price}")
 
 # ==========================================
-# 7. MAIN
+# 8. MAIN
 # ==========================================
 def main():
-    # Flask ko alag thread mein chalayein taake Render ka port block na ho
     threading.Thread(target=run_flask, daemon=True).start()
     
     app_bot = Application.builder().token(TELEGRAM_TOKEN).build()
+    
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("list", list_coins))
     app_bot.add_handler(CommandHandler("add", add_coin))
     app_bot.add_handler(CommandHandler("remove", remove_coin))
     app_bot.add_handler(CommandHandler("status", status))
     
+    app_bot.add_error_handler(error_handler)
+    
     job_queue = app_bot.job_queue
     job_queue.run_repeating(scan_market, interval=600, first=10)
 
-    print("Bot is running...")
+    print("Bot is running with Bitget data...")
     app_bot.run_polling()
 
 if __name__ == '__main__':
