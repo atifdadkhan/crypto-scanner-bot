@@ -17,7 +17,18 @@ YOUR_CHAT_ID = 6620183989
 LEVERAGE = 10 
 STATE_FILE = "trades.json"
 exchange = ccxt.binance() 
-tracked_coins = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT']
+tracked_coins = [
+    'BTC/USDT',   # Bitcoin
+    'ETH/USDT',   # Ethereum
+    'BNB/USDT',   # Binance Coin
+    'XRP/USDT',   # XRP
+    'SOL/USDT',   # Solana
+    'TRX/USDT',   # TRON
+    'ZEC/USDT',   # Zcash
+    'UNI/USDT',   # Uniswap
+    'ENA/USDT',   # Ethena
+    'ONDO/USDT'   # Ondo
+]
 timeframes = ['15m', '1h', '4h', '1d']
 
 # ==========================================
