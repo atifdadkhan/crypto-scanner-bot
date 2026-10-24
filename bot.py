@@ -25,21 +25,21 @@ tracked_coins = [
 ]
 timeframes = ['1h', '4h']
 
-# Toggles (Settings)
+# Toggles
 FILTER_CORE = True
 FILTER_MTF = True
 FILTER_VOLUME = True
 FILTER_RSI = True
 
 # 🏆 PROFESSIONAL SETTINGS 🏆
-MAX_ACTIVE_TRADES = 3    # Ek waqt mein max 3 trades
-ATR_MULTIPLIER = 1.5     # SL set karne ke liye ATR ka kitna guna use karna hai
+MAX_ACTIVE_TRADES = 3    
+ATR_MULTIPLIER = 1.5     
 
 # Global Locks
 is_scanning = False 
 
 # ==========================================
-# 2. FLASK WEB SERVER (Render Keep-Alive)
+# 2. FLASK WEB SERVER (Keep-Alive)
 # ==========================================
 app = Flask(__name__)
 
@@ -96,7 +96,7 @@ def get_main_menu():
         "💼 <b>PRO TRADING TERMINAL</b> 💼\n\n"
         "Welcome Boss! Main aapka personal trading assistant hoon.\n"
         "Neeche diye gaye menu se apna kaam manage karein.\n\n"
-        "⚡ <i>ATR Dynamic SL | Max 3 Trades | 1:2 RR</i>"
+        "🛡️ <i>Whale Protection Active</i>"
     )
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -121,12 +121,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
 # ==========================================
-# 6. BACKGROUND MARKET SCANNER LOGIC
+# 6. BACKGROUND MARKET SCANNER LOGIC (Whale Filter Added)
 # ==========================================
 def run_market_scan(scan_mode):
     try:
         tickers = exchange.fetch_tickers()
-        usdt_pairs = {k: v for k, v in tickers.items() if k.endswith('/USDT') and v.get('quoteVolume')}
+        
+        # 🛡️ WHALE PROTECTION: Tokenized Stocks ko filter out karna
+        # Yeh woh fake coins hain jo stocks ko follow karte hain (RQQQ, RAMZN, etc.)
+        # Hum sirf un coins ko list mein rakhenge jo asal crypto hain.
+        usdt_pairs = {}
+        for k, v in tickers.items():
+            if k.endswith('/USDT') and v.get('quoteVolume'):
+                base_coin = k.replace('/USDT', '')
+                
+                # Tokenized Stocks ko pehchanne ka tareeqa: 'R' se shuru aur uske baad capital letters
+                if base_coin.startswith('R') and len(base_coin) > 3 and base_coin[1:].isupper():
+                    continue # Skip tokenized stock
+                
+                # Kuch specific coins ko skip karein agar zaroorat ho
+                if base_coin in ['USDC', 'FDUSD', 'TUSD', 'USDP']: 
+                    continue
+                    
+                usdt_pairs[k] = v
+                
         sorted_pairs = sorted(usdt_pairs.items(), key=lambda x: x[1]['quoteVolume'], reverse=True)
         top_100_coins = [k for k, v in sorted_pairs[:100]]
 
@@ -220,7 +238,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'force_restart':
         await query.edit_message_text("🛑 <b>Restarting Bot...</b>\nRender will automatically bring it back online in 10-20 seconds.", parse_mode='HTML')
         await asyncio.sleep(2)
-        os._exit(0) # Forces Render to restart the service
+        os._exit(0)
 
     # --- SCAN EXECUTION ---
     elif query.data.startswith('run_scan_'):
@@ -315,7 +333,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "3️⃣ <b>Analyze Coin:</b> Kisi ek coin ka manual analysis.\n"
             "4️⃣ <b>Manage Coins:</b> <code>/add</code> / <code>/remove</code>.\n"
             "5️⃣ <b>System Controls:</b> Clear, Refresh, Restart.\n\n"
-            "🏆 <b>Pro Features:</b> ATR Dynamic SL, Max 3 Trades."
+            "🛡️ <b>Whale Protection:</b> ATR SL + Wick Filter."
         )
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
@@ -377,7 +395,7 @@ async def remove_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: /remove DOGE")
 
 # ==========================================
-# 10. SIGNAL ENGINES (Basic & Advanced with ATR)
+# 10. SIGNAL ENGINES (Basic & Advanced with Whale Wick Filter)
 # ==========================================
 def get_basic_trend(symbol, timeframe):
     try:
@@ -402,7 +420,9 @@ def check_signal(symbol, timeframe, filters):
         df['Vol_SMA'] = df['volume'].rolling(window=20).mean()
         df['ATR'] = ta.volatility.AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
         
-        c_close, c_low, c_high = df['close'].iloc[-1], df['low'].iloc[-1], df['high'].iloc[-1]
+        c_close, c_open = df['close'].iloc[-1], df['open'].iloc[-1]
+        c_low, c_high = df['low'].iloc[-1], df['high'].iloc[-1]
+        
         c_ema9, c_ema21 = df['EMA9'].iloc[-1], df['EMA21'].iloc[-1]
         p_ema9, p_ema21 = df['EMA9'].iloc[-2], df['EMA21'].iloc[-2]
         c_adx, p_adx = df['ADX'].iloc[-1], df['ADX'].iloc[-2]
@@ -413,6 +433,18 @@ def check_signal(symbol, timeframe, filters):
         signal = "WAIT"
         details = ""
         
+        # 🛡️ WHALE PROTECTION: Wick Rejection Filter
+        # Agar candle ki range bohot choti hai aur sooi (wick) bohot lambi hai, toh whales trap bana rahe hain
+        candle_range = c_high - c_low
+        if candle_range == 0: return "WAIT", c_close, "❌ No Movement.", current_atr
+        
+        upper_wick = c_high - max(c_open, c_close)
+        lower_wick = min(c_open, c_close) - c_low
+        
+        # Agar sooi total range ka 50% se zyada hai, toh signal reject karo (Fakeout)
+        if upper_wick > (candle_range * 0.5) or lower_wick > (candle_range * 0.5):
+            return "WAIT", c_close, "❌ Rejected: Whale Wick (Manipulation).", current_atr
+
         if filters.get("core"):
             bullish_cross = (p_ema9 <= p_ema21) and (c_ema9 > c_ema21)
             bearish_cross = (p_ema9 >= p_ema21) and (c_ema9 < c_ema21)
