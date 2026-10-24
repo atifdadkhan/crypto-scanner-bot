@@ -5,7 +5,7 @@ import pandas as pd
 import ta
 import threading
 import asyncio
-from datetime import datetime
+import datetime # Updated import for time
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -39,7 +39,21 @@ ATR_MULTIPLIER = 1.5
 is_scanning = False 
 
 # ==========================================
-# 2. FLASK WEB SERVER (Keep-Alive)
+# 2. SESSION FILTER FUNCTION
+# ==========================================
+def is_trading_session():
+    # Render ka server UTC time par chalta hai (PKT is UTC+5)
+    # London/New York best session: 12:00 PM PKT to 1:00 AM PKT
+    # In UTC terms: 07:00 AM UTC to 20:00 PM UTC (8 PM)
+    now_utc = datetime.datetime.utcnow()
+    current_hour = now_utc.hour
+    
+    if 7 <= current_hour < 20:
+        return True
+    return False
+
+# ==========================================
+# 3. FLASK WEB SERVER (Keep-Alive)
 # ==========================================
 app = Flask(__name__)
 
@@ -52,7 +66,7 @@ def run_flask():
     app.run(host='0.0.0.0', port=port)
 
 # ==========================================
-# 3. STATE MANAGEMENT
+# 4. STATE MANAGEMENT
 # ==========================================
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -73,13 +87,13 @@ def save_state(state):
 active_trades = load_state()
 
 # ==========================================
-# 4. ERROR HANDLER
+# 5. ERROR HANDLER
 # ==========================================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     print(f"⚠️ Global Error: {context.error}")
 
 # ==========================================
-# 5. TELEGRAM UI HELPERS
+# 6. TELEGRAM UI HELPERS
 # ==========================================
 def get_main_menu():
     keyboard = [
@@ -96,7 +110,8 @@ def get_main_menu():
         "💼 <b>PRO TRADING TERMINAL</b> 💼\n\n"
         "Welcome Boss! Main aapka personal trading assistant hoon.\n"
         "Neeche diye gaye menu se apna kaam manage karein.\n\n"
-        "🛡️ <i>Whale Protection Active</i>"
+        "🛡️ <i>Whale Protection Active</i>\n"
+        "🕒 <i>Trading Session: 12 PM - 1 AM (PKT)</i>"
     )
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -121,25 +136,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
 # ==========================================
-# 6. BACKGROUND MARKET SCANNER LOGIC (Whale Filter Added)
+# 7. BACKGROUND MARKET SCANNER LOGIC
 # ==========================================
 def run_market_scan(scan_mode):
     try:
         tickers = exchange.fetch_tickers()
         
-        # 🛡️ WHALE PROTECTION: Tokenized Stocks ko filter out karna
-        # Yeh woh fake coins hain jo stocks ko follow karte hain (RQQQ, RAMZN, etc.)
-        # Hum sirf un coins ko list mein rakhenge jo asal crypto hain.
         usdt_pairs = {}
         for k, v in tickers.items():
             if k.endswith('/USDT') and v.get('quoteVolume'):
                 base_coin = k.replace('/USDT', '')
                 
-                # Tokenized Stocks ko pehchanne ka tareeqa: 'R' se shuru aur uske baad capital letters
+                # Filter out tokenized stocks
                 if base_coin.startswith('R') and len(base_coin) > 3 and base_coin[1:].isupper():
-                    continue # Skip tokenized stock
-                
-                # Kuch specific coins ko skip karein agar zaroorat ho
+                    continue 
                 if base_coin in ['USDC', 'FDUSD', 'TUSD', 'USDP']: 
                     continue
                     
@@ -195,7 +205,7 @@ def run_market_scan(scan_mode):
         return f"❌ Market scan mein error aya: {e}"
 
 # ==========================================
-# 7. BUTTON HANDLER
+# 8. BUTTON HANDLER
 # ==========================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global is_scanning, FILTER_CORE, FILTER_MTF, FILTER_VOLUME, FILTER_RSI, active_trades
@@ -240,7 +250,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(2)
         os._exit(0)
 
-    # --- SCAN EXECUTION ---
+    # --- SCAN EXECUTION (Manual Scan works anytime) ---
     elif query.data.startswith('run_scan_'):
         if is_scanning:
             await query.answer("⏳ A scan is already in progress. Please wait...", show_alert=True)
@@ -333,12 +343,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "3️⃣ <b>Analyze Coin:</b> Kisi ek coin ka manual analysis.\n"
             "4️⃣ <b>Manage Coins:</b> <code>/add</code> / <code>/remove</code>.\n"
             "5️⃣ <b>System Controls:</b> Clear, Refresh, Restart.\n\n"
-            "🛡️ <b>Whale Protection:</b> ATR SL + Wick Filter."
+            "🛡️ <b>Whale Protection:</b> ATR SL + Wick Filter.\n"
+            "🕒 <b>Session Filter:</b> Bot sirf 12 PM - 1 AM (PKT) trade leta hai."
         )
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
 # ==========================================
-# 8. MESSAGE HANDLER
+# 9. MESSAGE HANDLER
 # ==========================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -366,7 +377,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please use the /start menu.")
 
 # ==========================================
-# 9. COMMANDS
+# 10. COMMANDS
 # ==========================================
 async def add_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -395,7 +406,7 @@ async def remove_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: /remove DOGE")
 
 # ==========================================
-# 10. SIGNAL ENGINES (Basic & Advanced with Whale Wick Filter)
+# 11. SIGNAL ENGINES (Basic & Advanced)
 # ==========================================
 def get_basic_trend(symbol, timeframe):
     try:
@@ -433,15 +444,11 @@ def check_signal(symbol, timeframe, filters):
         signal = "WAIT"
         details = ""
         
-        # 🛡️ WHALE PROTECTION: Wick Rejection Filter
-        # Agar candle ki range bohot choti hai aur sooi (wick) bohot lambi hai, toh whales trap bana rahe hain
+        # Whale Protection Filter
         candle_range = c_high - c_low
         if candle_range == 0: return "WAIT", c_close, "❌ No Movement.", current_atr
-        
         upper_wick = c_high - max(c_open, c_close)
         lower_wick = min(c_open, c_close) - c_low
-        
-        # Agar sooi total range ka 50% se zyada hai, toh signal reject karo (Fakeout)
         if upper_wick > (candle_range * 0.5) or lower_wick > (candle_range * 0.5):
             return "WAIT", c_close, "❌ Rejected: Whale Wick (Manipulation).", current_atr
 
@@ -490,11 +497,15 @@ def check_signal(symbol, timeframe, filters):
         return "ERROR", 0, "", 0
 
 # ==========================================
-# 11. BACKGROUND SCANNER & TRADE MANAGER
+# 12. BACKGROUND SCANNER & TRADE MANAGER (Session Filter Applied)
 # ==========================================
 async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     global active_trades
     bg_filters = {"core": FILTER_CORE, "mtf": FILTER_MTF, "vol": FILTER_VOLUME, "rsi": FILTER_RSI}
+    
+    # 🕒 SESSION FILTER CHECK
+    if not is_trading_session():
+        return # Bot rest karega agar out of session hai
     
     if len(active_trades) >= MAX_ACTIVE_TRADES:
         return 
@@ -557,14 +568,23 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
             save_state(active_trades)
 
 # ==========================================
-# 12. HEARTBEAT SYSTEM (8 Times a Day)
+# 13. HEARTBEAT SYSTEM (With Session Status)
 # ==========================================
 async def heartbeat_status(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now().strftime("%I:%M %p")
+    now = datetime.datetime.now().strftime("%I:%M %p")
+    is_active = is_trading_session()
+    status_text = "🟢 SCANNING" if is_active else "💤 SLEEPING (Out of Session)"
+    
     active_count = len(active_trades)
-    scanned_msg = f"✅ <b>Heartbeat Status ({now})</b>\n\n🤖 Bot is active.\n📊 Tracking {len(tracked_coins)} coins.\n📈 Active Trades: {active_count}/{MAX_ACTIVE_TRADES}\n\n"
-    if active_count == 0:
+    scanned_msg = f"✅ <b>Heartbeat Status ({now})</b>\n\n"
+    scanned_msg += f"🤖 Bot Status: {status_text}\n"
+    scanned_msg += f"📊 Tracking {len(tracked_coins)} coins.\n"
+    scanned_msg += f"📈 Active Trades: {active_count}/{MAX_ACTIVE_TRADES}\n\n"
+    
+    if is_active and active_count == 0:
         scanned_msg += "<i>Abhi tak koi strong signal nahi mila. Market scan jari hai...</i>"
+    elif not is_active:
+        scanned_msg += "<i>Abhi market session active nahi hai. Bot rest kar raha hai.</i>"
     
     try:
         await context.bot.send_message(chat_id=ADMIN_ID, text=scanned_msg, parse_mode='HTML')
@@ -572,7 +592,7 @@ async def heartbeat_status(context: ContextTypes.DEFAULT_TYPE):
         pass
 
 # ==========================================
-# 13. MAIN
+# 14. MAIN
 # ==========================================
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
