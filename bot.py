@@ -6,34 +6,30 @@ import ta
 import threading
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 
 # ==========================================
-# 1. CONFIGURATION (Your Personal Bot)
+# 1. CONFIGURATION
 # ==========================================
 TELEGRAM_TOKEN = "8664137345:AAF7ROx4_6PSTHYPKop-Ytf73CQB2Ekw_2g" 
-ADMIN_ID = 6620183989  # YOUR CHAT ID (Bot is locked to this ID)
+ADMIN_ID = 6620183989 
 
-LEVERAGE = 10 
 STATE_FILE = "trades.json"
 exchange = ccxt.bitget() 
 
-# Top 15 Strong Coins (Default)
 tracked_coins = [
     'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT',
-    'ADA/USDT', 'AVAX/USDT', 'LINK/USDT', 'DOT/USDT', 'MATIC/USDT',
-    'NEAR/USDT', 'INJ/USDT', 'SUI/USDT', 'OP/USDT', 'ARB/USDT'
+    'ADA/USDT', 'AVAX/USDT', 'LINK/USDT', 'DOT/USDT', 'MATIC/USDT'
 ]
-timeframes = ['15m', '1h', '4h', '1d']
+timeframes = ['1h', '4h']
 
-# Filters (Default ON)
 FILTER_CORE = True
 FILTER_MTF = True
 FILTER_VOLUME = True
 FILTER_RSI = True
 
 # ==========================================
-# 2. FLASK WEB SERVER (Render Keep-Alive)
+# 2. FLASK WEB SERVER (Keep-Alive)
 # ==========================================
 app = Flask(__name__)
 
@@ -61,33 +57,41 @@ def save_state(state):
 active_trades = load_state()
 
 # ==========================================
-# 4. TELEGRAM UI & SECURITY
+# 4. ERROR HANDLER
+# ==========================================
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(f"⚠️ Global Error: {context.error}")
+
+# ==========================================
+# 5. TELEGRAM UI (Main Menu)
 # ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # 🔒 SECURITY LOCK
     if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ <b>Access Denied.</b>\nThis is a private trading bot.", parse_mode='HTML')
+        await update.message.reply_text("⛔ <b>Access Denied.</b>\nThis is a private bot.", parse_mode='HTML')
         return
 
     keyboard = [
-        [InlineKeyboardButton("⚙️ Filters & Settings", callback_data='settings')],
+        [InlineKeyboardButton("📈 Active Trades", callback_data='active_trades'), 
+         InlineKeyboardButton("🌐 Market Summary", callback_data='market_summary')],
+        [InlineKeyboardButton("🔍 Analyze Coin", callback_data='analyze_coin')],
         [InlineKeyboardButton("📊 Manage Coins", callback_data='manage_coins')],
-        [InlineKeyboardButton("📈 Bot Status", callback_data='status')],
-        [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
+        [InlineKeyboardButton("⚙️ Settings", callback_data='settings'), 
+         InlineKeyboardButton("ℹ️ Help", callback_data='help')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     welcome_text = (
-        "🤖 <b>Welcome to Your Personal Trading Assistant!</b>\n\n"
-        "Main background mein Top 15 coins ko scan karta rahunga aur strong signals par aapko alert dunga.\n\n"
-        "🔍 <b>Manual Check:</b>\n"
-        "Type karein: <code>/check BTC/USDT</code> (Kisi bhi coin ka live analysis)\n\n"
-        "Neeche diye gaye buttons se settings manage karein:"
+        "💼 <b>PRO TRADING TERMINAL</b> 💼\n\n"
+        "Welcome Boss! Main aapka personal trading assistant hoon.\n"
+        "Neeche diye gaye menu se apna kaam manage karein.\n\n"
+        "⚡ <i>Pullback Entry | 1:2 RR | Partial Booking</i>"
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='HTML')
 
+# ==========================================
+# 6. BUTTON HANDLER (Terminal Navigation)
+# ==========================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -99,107 +103,146 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     global FILTER_CORE, FILTER_MTF, FILTER_VOLUME, FILTER_RSI
     
-    if query.data == 'settings':
-        keyboard = [
-            [InlineKeyboardButton(f"Core Strategy: {'🟢 ON' if FILTER_CORE else '🔴 OFF'}", callback_data='toggle_core')],
-            [InlineKeyboardButton(f"MTF Trend Filter: {'🟢 ON' if FILTER_MTF else '🔴 OFF'}", callback_data='toggle_mtf')],
-            [InlineKeyboardButton(f"Volume Spike: {'🟢 ON' if FILTER_VOLUME else '🔴 OFF'}", callback_data='toggle_vol')],
-            [InlineKeyboardButton(f"RSI Safe Zone: {'🟢 ON' if FILTER_RSI else '🔴 OFF'}", callback_data='toggle_rsi')],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]
-        ]
-        await query.edit_message_text("⚙️ <b>Bot Settings</b>\n\nFilters ON/OFF karne ke liye click karein. Background scanner inhi settings par chalega.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-    
-    elif query.data == 'toggle_core':
-        FILTER_CORE = not FILTER_CORE
-        await button_handler(update, context) 
-    elif query.data == 'toggle_mtf':
-        FILTER_MTF = not FILTER_MTF
-        await button_handler(update, context)
-    elif query.data == 'toggle_vol':
-        FILTER_VOLUME = not FILTER_VOLUME
-        await button_handler(update, context)
-    elif query.data == 'toggle_rsi':
-        FILTER_RSI = not FILTER_RSI
-        await button_handler(update, context)
-        
-    elif query.data == 'main_menu':
+    if query.data == 'main_menu':
         await start(update, context)
+
+    # --- 1. ACTIVE TRADES ---
+    elif query.data == 'active_trades':
+        if not active_trades:
+            await query.edit_message_text("📭 <b>No Active Trades.</b>\nBot abhi kisi trade ko track nahi kar raha.", 
+                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
+            return
         
+        text = "📈 <b>ACTIVE TRADES STATUS</b>\n\n"
+        keyboard = []
+        for trade_id, trade in active_trades.items():
+            coin = trade_id.split('_')[0]
+            tf = trade_id.split('_')[1]
+            direction = trade['type']
+            entry = trade['entry']
+            sl = trade['sl']
+            tp1 = trade['tp1']
+            
+            # Get current price quickly
+            try:
+                current_price = exchange.fetch_ohlcv(trade['coin'], '1m', limit=1)[0][4]
+            except:
+                current_price = entry # Fallback
+                
+            status = "🟢 In Profit" if (direction == "LONG" and current_price > entry) or (direction == "SHORT" and current_price < entry) else "🔴 In Loss"
+            
+            text += f"<b>{coin} ({tf}) {direction}</b>\n"
+            text += f"Entry: <code>{entry:.4f}</code> | Current: <code>{current_price:.4f}</code>\n"
+            text += f"SL: <code>{sl:.4f}</code> | TP1: <code>{tp1:.4f}</code>\n"
+            text += f"Status: {status}\n\n"
+            
+            keyboard.append([InlineKeyboardButton(f"❌ Cancel {coin}", callback_data=f"cancel_{trade_id}")])
+            
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data='main_menu')])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+    # --- CANCEL TRADE ---
+    elif query.data.startswith('cancel_'):
+        trade_id = query.data.replace('cancel_', '')
+        if trade_id in active_trades:
+            del active_trades[trade_id]
+            save_state(active_trades)
+        await query.edit_message_text(f"🗑️ Trade <code>{trade_id}</code> cancelled successfully.", 
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='active_trades')]]), parse_mode='HTML')
+
+    # --- 2. MARKET SUMMARY ---
+    elif query.data == 'market_summary':
+        await query.edit_message_text("⏳ Fetching Market Summary...")
+        summary_text = "🌐 <b>TOP COINS TREND (1H)</b>\n\n"
+        for coin in tracked_coins[:10]: # Top 10
+            signal, price, details = check_signal(coin, '1h')
+            trend = "🟢 BULLISH" if signal == "BUY" else "🔴 BEARISH" if signal == "SELL" else "🟡 WAIT"
+            summary_text += f"<b>{coin}</b>: {trend}\n"
+            
+        summary_text += "\n<i>Yeh analysis MTF aur Core filters ke hisaab se hai.</i>"
+        await query.edit_message_text(summary_text, 
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data='market_summary'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
+
+    # --- 3. ANALYZE COIN (Manual Input Prompt) ---
+    elif query.data == 'analyze_coin':
+        await query.edit_message_text("🔍 <b>Coin Analysis</b>\n\nPlease send the coin name like this:\n<code>BTC/USDT</code>\n\nOr simply type: <code>BTC</code>", 
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
+        context.user_data['awaiting_coin'] = True
+
+    # --- 4. MANAGE COINS ---
     elif query.data == 'manage_coins':
         coins_list = "\n".join([f"• {coin}" for coin in tracked_coins])
-        help_text = (
-            f"📊 <b>Tracked Coins ({len(tracked_coins)}):</b>\n{coins_list}\n\n"
-            f"<b>To Add a Coin:</b>\n<code>/add DOGE/USDT</code>\n\n"
-            f"<b>To Remove a Coin:</b>\n<code>/remove DOGE/USDT</code>"
-        )
-        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
-        await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-        
-    elif query.data == 'status':
-        status_text = (
-            f"📡 <b>Bot Status</b>\n\n"
-            f"🟢 Running\n"
-            f"Active Trades Tracked: {len(active_trades)}\n"
-            f"Source: Bitget\n"
-            f"Coins Scanned: {len(tracked_coins)}\n"
-            f"Timeframes: {', '.join(timeframes)}"
-        )
-        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
-        await query.edit_message_text(status_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        text = f"📊 <b>Tracked Coins ({len(tracked_coins)}):</b>\n{coins_list}\n\n"
+        text += "<b>Add:</b> <code>/add DOGE</code>\n<b>Remove:</b> <code>/remove DOGE</code>"
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
+    # --- 5. SETTINGS ---
+    elif query.data == 'settings':
+        keyboard = [
+            [InlineKeyboardButton(f"Core Strategy: {'🟢 ON' if FILTER_CORE else '🔴 OFF'}", callback_data='toggle_core')],
+            [InlineKeyboardButton(f"MTF Trend: {'🟢 ON' if FILTER_MTF else '🔴 OFF'}", callback_data='toggle_mtf')],
+            [InlineKeyboardButton(f"Volume Filter: {'🟢 ON' if FILTER_VOLUME else '🔴 OFF'}", callback_data='toggle_vol')],
+            [InlineKeyboardButton(f"RSI Filter: {'🟢 ON' if FILTER_RSI else '🔴 OFF'}", callback_data='toggle_rsi')],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]
+        ]
+        await query.edit_message_text("⚙️ <b>Terminal Settings</b>\n\nFilters ON/OFF karne ke liye click karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    
+    elif query.data == 'toggle_core':
+        FILTER_CORE = not FILTER_CORE; await button_handler(update, context) 
+    elif query.data == 'toggle_mtf':
+        FILTER_MTF = not FILTER_MTF; await button_handler(update, context)
+    elif query.data == 'toggle_vol':
+        FILTER_VOLUME = not FILTER_VOLUME; await button_handler(update, context)
+    elif query.data == 'toggle_rsi':
+        FILTER_RSI = not FILTER_RSI; await button_handler(update, context)
+
+    # --- 6. HELP ---
     elif query.data == 'help':
         help_text = (
-            "ℹ️ <b>How to use this bot?</b>\n\n"
-            "1️⃣ <b>On-Demand Check:</b> Kisi bhi coin ka analysis karne ke liye likhein <code>/check COIN/USDT</code>.\n\n"
-            "2️⃣ <b>Background Alerts:</b> Bot khud se Top 15 coins ko check karega. Jab bhi koi strong signal banega, aapko message aayega.\n\n"
-            "3️⃣ <b>Manage Filters:</b> Aap settings mein ja kar kisi bhi filter ko ON/OFF kar sakte hain.\n\n"
-            "4️⃣ <b>Coin Management:</b> <code>/add COIN</code> ya <code>/remove COIN</code> se list update karein.\n\n"
-            "5️⃣ <b>Risk Warning:</b> Hamesha diye gaye Stop Loss (SL) ka istemal karein."
+            "ℹ️ <b>Terminal Guide</b>\n\n"
+            "1️⃣ <b>Active Trades:</b> Yahan aapki live positions ka status dikhega.\n"
+            "2️⃣ <b>Market Summary:</b> Top 10 coins ka trend ek sath.\n"
+            "3️⃣ <b>Analyze Coin:</b> Kisi bhi coin ka manual analysis.\n"
+            "4️⃣ <b>Manage Coins:</b> <code>/add</code> ya <code>/remove</code> se coins manage karein.\n\n"
+            "<b>Strategy:</b> 1.5% SL, 3% TP1 (50% Book), Trailing SL to Breakeven."
         )
-        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
-        await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
 # ==========================================
-# 5. COMMANDS (/check, /add, /remove)
+# 7. MESSAGE HANDLER (For Manual Coin Analysis)
 # ==========================================
-async def check_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    try:
-        coin = context.args[0].upper()
-        if not coin.endswith('/USDT'): coin += '/USDT'
-    except:
-        await update.message.reply_text("❌ Usage: /check BTC/USDT")
-        return
-    
-    msg = await update.message.reply_text(f"🔍 Analyzing {coin}... Please wait.")
-    
-    # Check on 1h timeframe by default
-    signal, price, strength, details = check_signal(coin, '1h')
-    
-    if signal == "ERROR":
-        await msg.edit_text(f"❌ Error fetching data for {coin}. Make sure it's available on Bitget.")
-        return
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID: return
+
+    # Check if we are waiting for a coin name
+    if context.user_data.get('awaiting_coin'):
+        context.user_data['awaiting_coin'] = False # Reset state
+        coin = update.message.text.strip().upper()
         
-    if signal == "WAIT":
-        report = (f"⏳ <b>Analysis: {coin} (1H)</b>\n\n"
-                  f"💵 Price: {price}\n"
-                  f"📊 Status: <b>WAIT (No Clear Signal)</b>\n\n"
-                  f"<b>Condition Breakdown:</b>\n{details}")
-    elif signal == "BUY":
-        report = (f"🟢 <b>Analysis: {coin} (1H)</b>\n\n"
-                  f"💵 Price: {price}\n"
-                  f"⭐ Strength: {strength}%\n"
-                  f"📊 Status: <b>BUY SIGNAL</b>\n\n"
-                  f"<b>Conditions Met:</b>\n{details}")
-    elif signal == "SELL":
-        report = (f"🔴 <b>Analysis: {coin} (1H)</b>\n\n"
-                  f"💵 Price: {price}\n"
-                  f"⭐ Strength: {strength}%\n"
-                  f"📊 Status: <b>SELL SIGNAL</b>\n\n"
+        if not coin.endswith('/USDT'): 
+            coin += '/USDT'
+            
+        msg = await update.message.reply_text(f"🔍 Analyzing <b>{coin}</b>...", parse_mode='HTML')
+        
+        signal, price, details = check_signal(coin, '1h')
+        
+        if signal == "ERROR":
+            await msg.edit_text(f"❌ Error fetching data for <b>{coin}</b>. Make sure it exists on Bitget.", parse_mode='HTML')
+            return
+            
+        report = (f"<b>Analysis: {coin} (1H)</b>\n"
+                  f"💵 Current Price: <code>{price:.4f}</code>\n"
+                  f"📊 Status: <b>{signal}</b>\n\n"
                   f"<b>Conditions Met:</b>\n{details}")
                   
-    await msg.edit_text(report, parse_mode='HTML')
+        await msg.edit_text(report, parse_mode='HTML')
+    else:
+        await update.message.reply_text("Please use the /start menu to navigate the terminal.")
 
+# ==========================================
+# 8. COMMANDS (/check, /add, /remove)
+# ==========================================
 async def add_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     try:
@@ -207,11 +250,11 @@ async def add_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not coin.endswith('/USDT'): coin += '/USDT'
         if coin not in tracked_coins:
             tracked_coins.append(coin)
-            await update.message.reply_text(f"✅ Added {coin} to background scanner.")
+            await update.message.reply_text(f"✅ Added <b>{coin}</b> to scanner.", parse_mode='HTML')
         else:
             await update.message.reply_text(f"⚠️ {coin} is already in list.")
     except:
-        await update.message.reply_text("❌ Usage: /add DOGE/USDT")
+        await update.message.reply_text("❌ Usage: /add DOGE")
 
 async def remove_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -220,18 +263,18 @@ async def remove_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not coin.endswith('/USDT'): coin += '/USDT'
         if coin in tracked_coins:
             tracked_coins.remove(coin)
-            await update.message.reply_text(f"🗑️ Removed {coin} from scanner.")
+            await update.message.reply_text(f"🗑️ Removed <b>{coin}</b>.", parse_mode='HTML')
         else:
             await update.message.reply_text(f"⚠️ {coin} not found.")
     except:
-        await update.message.reply_text("❌ Usage: /remove DOGE/USDT")
+        await update.message.reply_text("❌ Usage: /remove DOGE")
 
 # ==========================================
-# 6. SIGNAL ENGINE (Detailed Analysis Logic)
+# 9. SIGNAL ENGINE (Core Logic + MTF + RSI + Volume)
 # ==========================================
 def check_mtf_trend(symbol, current_tf):
     try:
-        check_tf = '4h' if current_tf in ['15m', '1h'] else '1d'
+        check_tf = '4h' if current_tf == '1h' else '1d'
         ohlcv = exchange.fetch_ohlcv(symbol, check_tf, limit=30)
         df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
         ema9 = ta.trend.EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
@@ -253,140 +296,161 @@ def check_signal(symbol, timeframe):
         df['Vol_SMA'] = df['volume'].rolling(window=20).mean()
         
         c_close = df['close'].iloc[-1]
+        c_low = df['low'].iloc[-1]
+        c_high = df['high'].iloc[-1]
+        
         c_ema9 = df['EMA9'].iloc[-1]
         c_ema21 = df['EMA21'].iloc[-1]
         p_ema9 = df['EMA9'].iloc[-2]
         p_ema21 = df['EMA21'].iloc[-2]
         c_adx = df['ADX'].iloc[-1]
+        p_adx = df['ADX'].iloc[-2]
         c_roc = df['ROC'].iloc[-1]
         c_rsi = df['RSI'].iloc[-1]
         c_vol = df['volume'].iloc[-1]
         c_vol_sma = df['Vol_SMA'].iloc[-1]
         
-        ema_cross_up = (p_ema9 <= p_ema21) and (c_ema9 > c_ema21)
-        ema_cross_down = (p_ema9 >= p_ema21) and (c_ema9 < c_ema21)
-        
-        # Check if Core Filter is ON
         if not FILTER_CORE:
-            return "WAIT", c_close, 0, "❌ Core Strategy is turned OFF in settings."
+            return "WAIT", c_close, "❌ Core Strategy OFF."
 
-        if ema_cross_up and c_adx > 25 and c_roc > 0:
-            signal = "BUY"
-        elif ema_cross_down and c_adx > 25 and c_roc < 0:
-            signal = "SELL"
-        else:
-            return "WAIT", c_close, 0, "❌ Core Strategy not met (Needs EMA Cross, ADX > 25, ROC direction)."
-            
-        strength = 60 
+        signal = "WAIT"
         details = ""
-        details += f"✅ Core: EMA Cross, ADX({c_adx:.1f}), ROC({c_roc:.1f})\n"
         
-        # Filter 1: MTF
-        if FILTER_MTF:
-            mtf_trend = check_mtf_trend(symbol, timeframe)
-            if (signal == "BUY" and mtf_trend == "BULLISH") or (signal == "SELL" and mtf_trend == "BEARISH"):
-                strength += 15
-                details += f"✅ MTF Aligned (Higher TF is {mtf_trend})\n"
-            else:
-                return "WAIT", c_close, 0, details + f"❌ Rejected: MTF Conflict (Higher TF is {mtf_trend})."
-                
-        # Filter 2: Volume
-        if FILTER_VOLUME:
-            if c_vol > (c_vol_sma * 1.5):
-                strength += 15
-                details += f"✅ Volume Spike ({c_vol/c_vol_sma:.1f}x)\n"
-            else:
-                return "WAIT", c_close, 0, details + f"❌ Rejected: Low Volume ({c_vol/c_vol_sma:.1f}x)."
-                
-        # Filter 3: RSI
-        if FILTER_RSI:
-            if signal == "BUY" and 45 < c_rsi < 70:
-                strength += 10
-                details += f"✅ RSI Safe ({c_rsi:.1f})\n"
-            elif signal == "SELL" and 30 < c_rsi < 55:
-                strength += 10
-                details += f"✅ RSI Safe ({c_rsi:.1f})\n"
-            else:
-                return "WAIT", c_close, 0, details + f"❌ Rejected: RSI Extreme ({c_rsi:.1f})."
+        # 1. EMA Cross
+        bullish_cross = (p_ema9 <= p_ema21) and (c_ema9 > c_ema21)
+        bearish_cross = (p_ema9 >= p_ema21) and (c_ema9 < c_ema21)
+        
+        # 2. Pullback
+        bullish_pullback = (c_low <= c_ema9) and (c_close > c_ema9)
+        bearish_pullback = (c_high >= c_ema9) and (c_close < c_ema9)
+        
+        # 3. ADX Rising
+        adx_rising = c_adx > p_adx and c_adx > 20
 
-        return signal, c_close, strength, details
+        if (bullish_cross or bullish_pullback) and c_ema9 > c_ema21 and adx_rising and c_roc > 0:
+            signal = "BUY"
+            details += f"✅ EMA Bullish + Pullback\n✅ ADX Rising ({c_adx:.1f})\n✅ ROC Positive\n"
+        elif (bearish_cross or bearish_pullback) and c_ema9 < c_ema21 and adx_rising and c_roc < 0:
+            signal = "SELL"
+            details += f"✅ EMA Bearish + Pullback\n✅ ADX Rising ({c_adx:.1f})\n✅ ROC Negative\n"
+        else:
+            return "WAIT", c_close, "❌ No valid Pullback or ADX not rising."
+
+        if FILTER_MTF:
+            mtf = check_mtf_trend(symbol, timeframe)
+            if (signal == "BUY" and mtf == "BULLISH") or (signal == "SELL" and mtf == "BEARISH"):
+                details += f"✅ MTF Aligned ({mtf})\n"
+            else:
+                return "WAIT", c_close, details + f"❌ MTF Conflict."
+
+        if FILTER_VOLUME:
+            if c_vol > (c_vol_sma * 1.2):
+                details += f"✅ Volume Confirmed\n"
+            else:
+                return "WAIT", c_close, details + f"❌ Low Volume."
+
+        if FILTER_RSI:
+            if signal == "BUY" and 40 < c_rsi < 70:
+                details += f"✅ RSI Safe ({c_rsi:.1f})\n"
+            elif signal == "SELL" and 30 < c_rsi < 60:
+                details += f"✅ RSI Safe ({c_rsi:.1f})\n"
+            else:
+                return "WAIT", c_close, details + f"❌ RSI Extreme."
+
+        return signal, c_close, details
         
     except Exception as e:
-        print(f"Error on {symbol}: {e}")
-        return "ERROR", 0, 0, ""
+        return "ERROR", 0, ""
 
 # ==========================================
-# 7. BACKGROUND SCANNER (Top 15 Coins)
+# 10. BACKGROUND SCANNER & TRADE MANAGER
 # ==========================================
 async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     global active_trades
     
+    # --- NEW SIGNALS ---
     for coin in tracked_coins:
         for tf in timeframes:
-            signal, price, strength, details = check_signal(coin, tf)
+            signal, price, details = check_signal(coin, tf)
             
-            if signal == "WAIT" or signal == "ERROR":
-                continue
-                
-            # --- SPOT LOGIC ---
-            if signal == "BUY":
-                spot_id = f"{coin}_{tf}_SPOT"
-                if spot_id not in active_trades:
-                    active_trades[spot_id] = {"entry": price}
+            if signal in ["BUY", "SELL"]:
+                trade_id = f"{coin}_{tf}_{signal}"
+                if trade_id not in active_trades:
+                    if signal == "BUY":
+                        sl, tp1, tp2 = price * 0.985, price * 1.03, price * 1.06
+                        emoji, direction = "🟢", "LONG"
+                    else:
+                        sl, tp1, tp2 = price * 1.015, price * 0.97, price * 0.94
+                        emoji, direction = "🔴", "SHORT"
+                    
+                    active_trades[trade_id] = {
+                        "coin": coin, "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2, 
+                        "type": direction, "tp1_hit": False, "sl_moved": False
+                    }
                     save_state(active_trades)
-                    msg = (f"🟢 <b>SPOT BUY: {coin}</b> ({tf})\n"
-                           f"⭐ <b>Strength: {strength}%</b>\n\n"
-                           f"💵 Entry: {price}\n"
-                           f"🎯 Target: {price * 1.05:.4f} (+5%)\n"
-                           f"🛑 SL: {price * 0.98:.4f} (-2%)\n\n"
-                           f"<b>Filters Passed:</b>\n{details}")
+                    
+                    msg = (f"{emoji} <b>{direction}: {coin}</b> ({tf})\n\n"
+                           f"💵 Entry: <code>{price:.4f}</code>\n"
+                           f"🛑 SL: <code>{sl:.4f}</code>\n"
+                           f"🎯 TP1 (50%): <code>{tp1:.4f}</code>\n"
+                           f"🎯 TP2 (50%): <code>{tp2:.4f}</code>\n\n"
+                           f"<b>Details:</b>\n{details}")
                     await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='HTML')
 
-            # --- FUTURES LOGIC ---
-            fut_id = f"{coin}_{tf}_FUT"
-            if signal == "BUY":
-                if fut_id not in active_trades:
-                    active_trades[fut_id] = {"entry": price, "type": "LONG"}
-                    save_state(active_trades)
-                    msg = (f"🚀 <b>FUTURES LONG: {coin}</b> ({tf})\n"
-                           f"⭐ <b>Strength: {strength}%</b>\n\n"
-                           f"💵 Entry: {price}\n"
-                           f"🎯 Target (20% ROI): {price * 1.02:.4f}\n"
-                           f"🛑 SL (-20% ROI): {price * 0.98:.4f}\n\n"
-                           f"<b>Filters Passed:</b>\n{details}")
-                    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='HTML')
-                    
-            elif signal == "SELL":
-                if f"{fut_id}_SHORT" not in active_trades:
-                    active_trades[f"{fut_id}_SHORT"] = {"entry": price, "type": "SHORT"}
-                    save_state(active_trades)
-                    msg = (f"🔴 <b>FUTURES SHORT: {coin}</b> ({tf})\n"
-                           f"⭐ <b>Strength: {strength}%</b>\n\n"
-                           f"💵 Entry: {price}\n"
-                           f"🎯 Target (20% ROI): {price * 0.98:.4f}\n"
-                           f"🛑 SL (-20% ROI): {price * 1.02:.4f}\n\n"
-                           f"<b>Filters Passed:</b>\n{details}")
-                    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='HTML')
+    # --- MANAGE ACTIVE TRADES ---
+    for trade_id, trade in list(active_trades.items()):
+        try:
+            current_price = exchange.fetch_ohlcv(trade['coin'], '1m', limit=1)[0][4]
+        except:
+            continue
+
+        entry, sl, tp1, tp2, direction = trade['entry'], trade['sl'], trade['tp1'], trade['tp2'], trade['type']
+
+        # TP1 Hit -> 50% Book, SL to Breakeven
+        if not trade['tp1_hit']:
+            if (direction == "LONG" and current_price >= tp1) or (direction == "SHORT" and current_price <= tp1):
+                trade['tp1_hit'] = True
+                trade['sl'] = entry
+                trade['sl_moved'] = True
+                save_state(active_trades)
+                msg = (f"🎯 <b>TP1 HIT: {trade['coin']}</b>\n\n"
+                       f"✅ 50% Booked. SL moved to Breakeven (<code>{entry:.4f}</code>).")
+                await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='HTML')
+        
+        # TP2 Hit
+        if (direction == "LONG" and current_price >= tp2) or (direction == "SHORT" and current_price <= tp2):
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"🏆 <b>TP2 HIT: {trade['coin']}</b>\n✅ Full Trade Closed.", parse_mode='HTML')
+            del active_trades[trade_id]
+            save_state(active_trades)
+            continue
+
+        # SL Hit
+        if (direction == "LONG" and current_price <= sl) or (direction == "SHORT" and current_price >= sl):
+            status = "Breakeven" if trade['sl_moved'] else "Loss (-1.5%)"
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"🔴 <b>SL HIT: {trade['coin']}</b>\n❌ Closed at {status}.", parse_mode='HTML')
+            del active_trades[trade_id]
+            save_state(active_trades)
 
 # ==========================================
-# 8. MAIN
+# 11. MAIN
 # ==========================================
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
     
     app_bot = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # Handlers
     app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CommandHandler("check", check_coin_cmd))
     app_bot.add_handler(CommandHandler("add", add_coin_cmd))
     app_bot.add_handler(CommandHandler("remove", remove_coin_cmd))
     app_bot.add_handler(CallbackQueryHandler(button_handler))
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    app_bot.add_error_handler(error_handler)
     
     job_queue = app_bot.job_queue
-    job_queue.run_repeating(scan_market, interval=600, first=10)
+    job_queue.run_repeating(scan_market, interval=300, first=10)
 
-    print("Personal Pro Bot is running...")
+    print("Ultimate Terminal Bot is running...")
     app_bot.run_polling()
 
 if __name__ == '__main__':
