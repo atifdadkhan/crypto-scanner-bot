@@ -284,14 +284,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_state(active_trades)
         await query.edit_message_text(f"🗑️ Trade <code>{trade_id}</code> cancelled successfully.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='active_trades')]]), parse_mode='HTML')
 
-    # --- MARKET SUMMARY ---
+    # --- MARKET SUMMARY (UPDATED TO SHOW ALL 30 COINS) ---
     elif query.data == 'market_summary':
-        await query.edit_message_text("⏳ Fetching Basic Trend (9/21 EMA)...")
-        summary_text = "🌐 <b>TOP COINS BASIC TREND (1H)</b>\n\n"
-        for coin in tracked_coins[:10]: # Summary mein sirf top 10 dikhayenge taake message lamba na ho
+        await query.edit_message_text("⏳ Fetching Basic Trend (9/21 EMA) for 30 coins...")
+        summary_text = "🌐 <b>TOP 30 COINS BASIC TREND (1H)</b>\n\n"
+        
+        # Yahan se [:10] hata diya gaya hai taake poore 30 coins dikhein
+        for coin in tracked_coins:
             trend = get_basic_trend(coin, '1h')
             emoji = "🟢 BULLISH" if trend == "BULLISH" else "🔴 BEARISH" if trend == "BEARISH" else "🟡 UNKNOWN"
             summary_text += f"<b>{coin}</b>: {emoji}\n"
+            
         summary_text += "\n<i>Yeh sirf basic EMA 9/21 trend hai.</i>"
         await query.edit_message_text(summary_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data='market_summary'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
@@ -595,7 +598,7 @@ def main():
     app_bot.add_error_handler(error_handler)
     
     job_queue = app_bot.job_queue
-    # Ab scan har 10 minute (600 seconds) baad hoga taake server par load na aaye
+    # Background scan har 10 minute baad hoga
     job_queue.run_repeating(scan_market, interval=600, first=10)
     job_queue.run_repeating(heartbeat_status, interval=10800, first=60)
 
