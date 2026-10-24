@@ -4,6 +4,7 @@ import ccxt
 import pandas as pd
 import ta
 import threading
+import asyncio
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -63,12 +64,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     print(f"⚠️ Global Error: {context.error}")
 
 # ==========================================
-# 5. TELEGRAM UI HELPERS (Yahan fix hai)
+# 5. TELEGRAM UI HELPERS
 # ==========================================
 def get_main_menu():
     keyboard = [
         [InlineKeyboardButton("📈 Active Trades", callback_data='active_trades'), 
          InlineKeyboardButton("🌐 Market Summary", callback_data='market_summary')],
+        [InlineKeyboardButton("🔎 Scan Top 100 Market", callback_data='scan_top_100')],
         [InlineKeyboardButton("🔍 Analyze Coin", callback_data='analyze_coin')],
         [InlineKeyboardButton("📊 Manage Coins", callback_data='manage_coins')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings'), 
@@ -92,7 +94,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
 # ==========================================
-# 6. BUTTON HANDLER
+# 6. BACKGROUND MARKET SCANNER LOGIC
+# ==========================================
+def run_market_scan():
+    """Yeh function background mein 100 coins ko scan karega taake bot hang na ho"""
+    try:
+        # 1. Fetch all tickers to find top 100 by volume
+        tickers = exchange.fetch_tickers()
+        usdt_pairs = {k: v for k, v in tickers.items() if k.endswith('/USDT') and v.get('quoteVolume')}
+        
+        # 2. Sort by volume (descending) and take top 100
+        sorted_pairs = sorted(usdt_pairs.items(), key=lambda x: x[1]['quoteVolume'], reverse=True)
+        top_100_coins = [k for k, v in sorted_pairs[:100]]
+
+        results = []
+        
+        # 3. Scan each coin (sirf 1h timeframe par taake time kam lage)
+        for coin in top_100_coins:
+            signal, price, details = check_signal(coin, '1h')
+            
+            if signal in ["BUY", "SELL"]:
+                # Professional Risk Calculation
+                if signal == "BUY":
+                    sl = price * 0.985  # -1.5%
+                    tp1 = price * 1.03  # +3%
+                    direction = "🟢 LONG"
+                else:
+                    sl = price * 1.015  # +1.5%
+                    tp1 = price * 0.97  # -3%
+                    direction = "🔴 SHORT"
+                
+                results.append({
+                    "coin": coin,
+                    "signal": direction,
+                    "price": price,
+                    "sl": sl,
+                    "tp1": tp1
+                })
+        
+        # 4. Format the results
+        if not results:
+            return "🔎 <b>Market Scan Complete</b>\n\nMarket ke Top 100 coins mein abhi koi clear signal nahi mila. Please WAIT karein."
+            
+        result_text = "🚀 <b>TOP 100 MARKET SCAN RESULTS</b>\n\n"
+        result_text += "Yeh woh coins hain jahan abhi trade ban rahi hai:\n\n"
+        
+        for res in results:
+            result_text += f"<b>{res['coin']}</b> ({res['signal']})\n"
+            result_text += f"💵 Entry: <code>{res['price']:.4f}</code>\n"
+            result_text += f"🛑 SL: <code>{res['sl']:.4f}</code> | 🎯 TP1: <code>{res['tp1']:.4f}</code>\n\n"
+            
+        result_text += "<i>Note: Yeh sirf 1H timeframe ka scan hai. Entry lene se pehle chart confirm karein.</i>"
+        return result_text
+        
+    except Exception as e:
+        print(f"Scan Error: {e}")
+        return f"❌ Market scan mein error aya: {e}"
+
+# ==========================================
+# 7. BUTTON HANDLER
 # ==========================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -105,10 +165,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     global FILTER_CORE, FILTER_MTF, FILTER_VOLUME, FILTER_RSI
     
-    # --- MAIN MENU (Back Button Fix) ---
+    # --- MAIN MENU ---
     if query.data == 'main_menu':
         text, reply_markup = get_main_menu()
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    # --- NEW: SCAN TOP 100 ---
+    elif query.data == 'scan_top_100':
+        await query.edit_message_text("⏳ <b>Scanning Top 100 Coins by Volume...</b>\n\nIsme taqreeban 1 se 2 minute lag sakte hain. Please wait, main result tayar karke bhej raha hoon...", parse_mode='HTML')
+        
+        # Async threading taake bot hang na ho
+        result_text = await asyncio.to_thread(run_market_scan)
+        
+        await query.edit_message_text(result_text, 
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Scan Again", callback_data='scan_top_100'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), 
+                                      parse_mode='HTML')
 
     # --- 1. ACTIVE TRADES ---
     elif query.data == 'active_trades':
@@ -144,7 +215,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("🔙 Back", callback_data='main_menu')])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
-    # --- CANCEL TRADE ---
     elif query.data.startswith('cancel_'):
         trade_id = query.data.replace('cancel_', '')
         if trade_id in active_trades:
@@ -166,7 +236,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(summary_text, 
                                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data='market_summary'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
-    # --- 3. ANALYZE COIN ---
+    # --- 3. ANALYZE COIN (Unchanged) ---
     elif query.data == 'analyze_coin':
         await query.edit_message_text("🔍 <b>Coin Analysis</b>\n\nPlease send the coin name like this:\n<code>BTC/USDT</code>\n\nOr simply type: <code>BTC</code>", 
                                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
@@ -203,16 +273,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'help':
         help_text = (
             "ℹ️ <b>Terminal Guide</b>\n\n"
-            "1️⃣ <b>Active Trades:</b> Yahan aapki live positions ka status dikhega.\n"
-            "2️⃣ <b>Market Summary:</b> Top 10 coins ka trend ek sath.\n"
-            "3️⃣ <b>Analyze Coin:</b> Kisi bhi coin ka manual analysis.\n"
+            "1️⃣ <b>Scan Top 100:</b> Poori market ke top 100 coins scan karein.\n"
+            "2️⃣ <b>Active Trades:</b> Aapki live positions ka status.\n"
+            "3️⃣ <b>Analyze Coin:</b> Kisi ek coin ka manual analysis.\n"
             "4️⃣ <b>Manage Coins:</b> <code>/add</code> ya <code>/remove</code> se coins manage karein.\n\n"
-            "<b>Strategy:</b> 1.5% SL, 3% TP1 (50% Book), Trailing SL to Breakeven."
+            "<b>Strategy:</b> 1.5% SL, 3% TP1, Trailing SL to Breakeven."
         )
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
 # ==========================================
-# 7. MESSAGE HANDLER (For Manual Coin Analysis)
+# 8. MESSAGE HANDLER (For Manual Coin Analysis)
 # ==========================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -238,13 +308,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   f"📊 Status: <b>{signal}</b>\n\n"
                   f"<b>Conditions Met:</b>\n{details}")
                   
-        # Yahan bhi Back button add kiya hai taake user wapas ja sake
         await msg.edit_text(report, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]), parse_mode='HTML')
     else:
         await update.message.reply_text("Please use the /start menu to navigate the terminal.")
 
 # ==========================================
-# 8. COMMANDS (/check, /add, /remove)
+# 9. COMMANDS (/add, /remove)
 # ==========================================
 async def add_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -273,7 +342,7 @@ async def remove_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: /remove DOGE")
 
 # ==========================================
-# 9. SIGNAL ENGINE
+# 10. SIGNAL ENGINE
 # ==========================================
 def check_mtf_trend(symbol, current_tf):
     try:
@@ -363,7 +432,7 @@ def check_signal(symbol, timeframe):
         return "ERROR", 0, ""
 
 # ==========================================
-# 10. BACKGROUND SCANNER & TRADE MANAGER
+# 11. BACKGROUND SCANNER & TRADE MANAGER
 # ==========================================
 async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     global active_trades
@@ -427,7 +496,7 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
             save_state(active_trades)
 
 # ==========================================
-# 11. MAIN
+# 12. MAIN
 # ==========================================
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
