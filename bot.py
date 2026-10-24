@@ -36,20 +36,37 @@ def fmt(price):
     else: return f"{price:.4f}"
 
 # ==========================================
-# DYNAMIC SCANNER FUNCTION (Top 50)
+# 🛑 DYNAMIC SCANNER (Strict Crypto Only - Top 50)
 # ==========================================
 def get_dynamic_top_50():
     try:
         tickers = exchange.fetch_tickers()
-        blacklist = ['USDC', 'FDUSD', 'TUSD', 'USDP', 'DAI']
+        
+        # 🛑 Bitget Tokenized Stocks & Stablecoins ki mukammal list
+        blacklist = [
+            'USDC', 'FDUSD', 'TUSD', 'USDP', 'DAI', 'EUR', 
+            'RMU', 'RBE', 'RT', 'RVZ', 'RGE', 'RVO', 'RV', 'RKO', 'RPG', 'RMS', 
+            'RMA', 'RGS', 'RNU', 'RHD', 'RBX', 'RBA', 'RZS', 'RC', 'RCB', 'RPH',
+            'RQQQ', 'RAMZN', 'RAAPL', 'RSPCX', 'RAMD', 'RIWM', 'RAVGO', 'RHYG', 
+            'RSOXL', 'RBIL', 'RIEF', 'RIVV', 'REWZ', 'RSHV', 'RPLTR', 'RLLY', 
+            'RGEV', 'RCOST', 'RTLT', 'RCRWD'
+        ]
+        
         valid_coins = {}
         
         for k, v in tickers.items():
             if k.endswith('/USDT') and v.get('quoteVolume'):
                 base_coin = k.replace('/USDT', '')
-                if base_coin in blacklist: continue
-                # Tokenized stocks filter
-                if base_coin.startswith('R') and len(base_coin) > 3 and base_coin[1:].isupper(): continue
+                
+                # 1. Blacklist check
+                if base_coin in blacklist: 
+                    continue
+                
+                # 2. Smart check for fake stock tokens (R + 2-4 letters)
+                if base_coin.startswith('R') and 2 <= len(base_coin) <= 4 and base_coin.isupper():
+                    if base_coin not in ['RUNE', 'RSR', 'RNDR', 'RIF', 'REN']: # Crypto exceptions
+                        continue
+                
                 valid_coins[k] = v
                 
         sorted_pairs = sorted(valid_coins.items(), key=lambda x: x[1]['quoteVolume'], reverse=True)
@@ -64,7 +81,7 @@ def is_trading_session():
     return False
 
 # ==========================================
-# 2. FLASK WEB SERVER (Keep-Alive)
+# 2. FLASK WEB SERVER
 # ==========================================
 app = Flask(__name__)
 
@@ -114,7 +131,8 @@ def get_main_menu():
         "Welcome Boss! Main aapka personal trading assistant hoon.\n"
         "🛡️ <i>Whale Protection Active</i>\n"
         "🕒 <i>Session: 12 PM - 1 AM (PKT)</i>\n"
-        "🌍 <i>Auto-Scanning Top 50 High-Volume Coins</i>"
+        "🌍 <i>Auto-Scanning Top 50 Crypto Coins</i>\n"
+        "🔓 <i>Trade Limit: Unlimited</i>"
     )
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -193,7 +211,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scan_mode = parts[0] 
         scan_tf = parts[1] 
 
-        await query.edit_message_text(f"⏳ <b>Scanning Dynamic Top 50...</b>\n<i>Please wait...</i>", parse_mode='HTML')
+        await query.edit_message_text(f"⏳ <b>Scanning Top 50 Crypto Coins...</b>\n<i>Please wait...</i>", parse_mode='HTML')
         try:
             result_text = await asyncio.to_thread(run_market_scan, scan_mode, scan_tf)
             await query.edit_message_text(result_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='scan_menu'), InlineKeyboardButton("🏠 Main Menu", callback_data='main_menu')]]), parse_mode='HTML')
@@ -205,7 +223,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("📭 <b>No Active Trades.</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
             return
         
-        text = "📈 <b>ACTIVE TRADES</b>\n\n"
+        text = "📈 <b>ACTIVE TRADES (Unlimited)</b>\n\n"
         keyboard = []
         for trade_id, trade in active_trades.items():
             coin, tf = trade_id.split('_')[0], trade_id.split('_')[1]
@@ -228,7 +246,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'market_summary':
         await query.edit_message_text("⏳ Fetching Top 50 Summary...")
         dynamic_coins = get_dynamic_top_50()
-        summary_text = "🌐 <b>DYNAMIC TOP 50 (1H)</b>\n\n"
+        summary_text = "🌐 <b>DYNAMIC TOP 50 CRYPTO (1H)</b>\n\n"
         for coin in dynamic_coins[:20]: 
             trend = get_basic_trend(coin, '1h')
             emoji = "🟢" if trend == "BULLISH" else "🔴"
@@ -266,11 +284,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'toggle_rsi': FILTER_RSI = not FILTER_RSI; await button_handler(update, context)
 
     elif query.data == 'help':
-        help_text = "ℹ️ <b>Guide</b>\nBot khud Top 50 volume coins scan karta hai. MTF logic Pairwise hai."
+        help_text = "ℹ️ <b>Guide</b>\nBot khud Top 50 Crypto coins scan karta hai. Koi trade limit nahi hai."
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
 # ==========================================
-# 6. MESSAGE HANDLER (Manual Analysis)
+# 6. MESSAGE HANDLER
 # ==========================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -329,9 +347,6 @@ def run_market_scan(scan_mode, scan_tf):
     except Exception as e:
         return f"❌ Error: {e}"
 
-# ==========================================
-# 8. SIGNAL ENGINE (Core Logic)
-# ==========================================
 def get_basic_trend(symbol, timeframe):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=30)
@@ -380,7 +395,6 @@ def check_signal(symbol, timeframe, filters):
             elif (bearish_cross or bearish_pullback) and c_ema9 < c_ema21 and adx_rising and c_roc < 0:
                 signal, details = "SELL", f"✅ Core: Bearish Pullback\n"
             else:
-                # 🛡️ Professional Feedback on ADX
                 if c_adx < 20:
                     return "WAIT", c_close, f"⚠️ Rejected: ADX is Weak ({c_adx:.1f}). Market is Sideways.", current_atr
                 elif c_adx < p_adx:
@@ -412,7 +426,7 @@ def check_signal(symbol, timeframe, filters):
     except Exception: return "ERROR", 0, "", 0
 
 # ==========================================
-# 9. BACKGROUND SCANNER & TRADE MANAGER
+# 8. BACKGROUND SCANNER & TRADE MANAGER
 # ==========================================
 async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     global active_trades
@@ -468,7 +482,7 @@ async def heartbeat_status(context: ContextTypes.DEFAULT_TYPE):
     is_active = is_trading_session()
     status_text = "🟢 SCANNING" if is_active else "💤 SLEEPING"
     
-    scanned_msg = f"✅ <b>Heartbeat ({now})</b>\n\n🤖 Status: {status_text}\n🌍 Auto-Scanning Top 50\n📈 Trades: {len(active_trades)}\n\n"
+    scanned_msg = f"✅ <b>Heartbeat ({now})</b>\n\n🤖 Status: {status_text}\n🌍 Auto-Scanning Top 50 Crypto\n📈 Trades: {len(active_trades)}\n\n"
     if is_active and not active_trades: scanned_msg += "<i>Market scan jari hai...</i>"
     
     try: await context.bot.send_message(chat_id=ADMIN_ID, text=scanned_msg, parse_mode='HTML')
@@ -490,7 +504,7 @@ def main():
     job_queue.run_repeating(scan_market, interval=600, first=10)
     job_queue.run_repeating(heartbeat_status, interval=10800, first=60)
 
-    print("Dynamic Pro Bot (Top 50) is running...")
+    print("Dynamic Pro Bot (Top 50 + No Limit) is running...")
     app_bot.run_polling()
 
 if __name__ == '__main__':
