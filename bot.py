@@ -63,14 +63,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     print(f"⚠️ Global Error: {context.error}")
 
 # ==========================================
-# 5. TELEGRAM UI (Main Menu)
+# 5. TELEGRAM UI HELPERS (Yahan fix hai)
 # ==========================================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ <b>Access Denied.</b>\nThis is a private bot.", parse_mode='HTML')
-        return
-
+def get_main_menu():
     keyboard = [
         [InlineKeyboardButton("📈 Active Trades", callback_data='active_trades'), 
          InlineKeyboardButton("🌐 Market Summary", callback_data='market_summary')],
@@ -79,18 +74,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings'), 
          InlineKeyboardButton("ℹ️ Help", callback_data='help')]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    welcome_text = (
+    text = (
         "💼 <b>PRO TRADING TERMINAL</b> 💼\n\n"
         "Welcome Boss! Main aapka personal trading assistant hoon.\n"
         "Neeche diye gaye menu se apna kaam manage karein.\n\n"
         "⚡ <i>Pullback Entry | 1:2 RR | Partial Booking</i>"
     )
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='HTML')
+    return text, InlineKeyboardMarkup(keyboard)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ <b>Access Denied.</b>\nThis is a private bot.", parse_mode='HTML')
+        return
+
+    text, reply_markup = get_main_menu()
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
 # ==========================================
-# 6. BUTTON HANDLER (Terminal Navigation)
+# 6. BUTTON HANDLER
 # ==========================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -103,8 +105,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     global FILTER_CORE, FILTER_MTF, FILTER_VOLUME, FILTER_RSI
     
+    # --- MAIN MENU (Back Button Fix) ---
     if query.data == 'main_menu':
-        await start(update, context)
+        text, reply_markup = get_main_menu()
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     # --- 1. ACTIVE TRADES ---
     elif query.data == 'active_trades':
@@ -123,11 +127,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sl = trade['sl']
             tp1 = trade['tp1']
             
-            # Get current price quickly
             try:
                 current_price = exchange.fetch_ohlcv(trade['coin'], '1m', limit=1)[0][4]
             except:
-                current_price = entry # Fallback
+                current_price = entry
                 
             status = "🟢 In Profit" if (direction == "LONG" and current_price > entry) or (direction == "SHORT" and current_price < entry) else "🔴 In Loss"
             
@@ -154,7 +157,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'market_summary':
         await query.edit_message_text("⏳ Fetching Market Summary...")
         summary_text = "🌐 <b>TOP COINS TREND (1H)</b>\n\n"
-        for coin in tracked_coins[:10]: # Top 10
+        for coin in tracked_coins[:10]:
             signal, price, details = check_signal(coin, '1h')
             trend = "🟢 BULLISH" if signal == "BUY" else "🔴 BEARISH" if signal == "SELL" else "🟡 WAIT"
             summary_text += f"<b>{coin}</b>: {trend}\n"
@@ -163,7 +166,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(summary_text, 
                                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data='market_summary'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
-    # --- 3. ANALYZE COIN (Manual Input Prompt) ---
+    # --- 3. ANALYZE COIN ---
     elif query.data == 'analyze_coin':
         await query.edit_message_text("🔍 <b>Coin Analysis</b>\n\nPlease send the coin name like this:\n<code>BTC/USDT</code>\n\nOr simply type: <code>BTC</code>", 
                                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
@@ -215,9 +218,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID: return
 
-    # Check if we are waiting for a coin name
     if context.user_data.get('awaiting_coin'):
-        context.user_data['awaiting_coin'] = False # Reset state
+        context.user_data['awaiting_coin'] = False
         coin = update.message.text.strip().upper()
         
         if not coin.endswith('/USDT'): 
@@ -236,7 +238,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   f"📊 Status: <b>{signal}</b>\n\n"
                   f"<b>Conditions Met:</b>\n{details}")
                   
-        await msg.edit_text(report, parse_mode='HTML')
+        # Yahan bhi Back button add kiya hai taake user wapas ja sake
+        await msg.edit_text(report, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]), parse_mode='HTML')
     else:
         await update.message.reply_text("Please use the /start menu to navigate the terminal.")
 
@@ -270,7 +273,7 @@ async def remove_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: /remove DOGE")
 
 # ==========================================
-# 9. SIGNAL ENGINE (Core Logic + MTF + RSI + Volume)
+# 9. SIGNAL ENGINE
 # ==========================================
 def check_mtf_trend(symbol, current_tf):
     try:
@@ -316,15 +319,12 @@ def check_signal(symbol, timeframe):
         signal = "WAIT"
         details = ""
         
-        # 1. EMA Cross
         bullish_cross = (p_ema9 <= p_ema21) and (c_ema9 > c_ema21)
         bearish_cross = (p_ema9 >= p_ema21) and (c_ema9 < c_ema21)
         
-        # 2. Pullback
         bullish_pullback = (c_low <= c_ema9) and (c_close > c_ema9)
         bearish_pullback = (c_high >= c_ema9) and (c_close < c_ema9)
         
-        # 3. ADX Rising
         adx_rising = c_adx > p_adx and c_adx > 20
 
         if (bullish_cross or bullish_pullback) and c_ema9 > c_ema21 and adx_rising and c_roc > 0:
@@ -368,7 +368,6 @@ def check_signal(symbol, timeframe):
 async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     global active_trades
     
-    # --- NEW SIGNALS ---
     for coin in tracked_coins:
         for tf in timeframes:
             signal, price, details = check_signal(coin, tf)
@@ -397,7 +396,6 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                            f"<b>Details:</b>\n{details}")
                     await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='HTML')
 
-    # --- MANAGE ACTIVE TRADES ---
     for trade_id, trade in list(active_trades.items()):
         try:
             current_price = exchange.fetch_ohlcv(trade['coin'], '1m', limit=1)[0][4]
@@ -406,7 +404,6 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
 
         entry, sl, tp1, tp2, direction = trade['entry'], trade['sl'], trade['tp1'], trade['tp2'], trade['type']
 
-        # TP1 Hit -> 50% Book, SL to Breakeven
         if not trade['tp1_hit']:
             if (direction == "LONG" and current_price >= tp1) or (direction == "SHORT" and current_price <= tp1):
                 trade['tp1_hit'] = True
@@ -417,14 +414,12 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                        f"✅ 50% Booked. SL moved to Breakeven (<code>{entry:.4f}</code>).")
                 await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='HTML')
         
-        # TP2 Hit
         if (direction == "LONG" and current_price >= tp2) or (direction == "SHORT" and current_price <= tp2):
             await context.bot.send_message(chat_id=ADMIN_ID, text=f"🏆 <b>TP2 HIT: {trade['coin']}</b>\n✅ Full Trade Closed.", parse_mode='HTML')
             del active_trades[trade_id]
             save_state(active_trades)
             continue
 
-        # SL Hit
         if (direction == "LONG" and current_price <= sl) or (direction == "SHORT" and current_price >= sl):
             status = "Breakeven" if trade['sl_moved'] else "Loss (-1.5%)"
             await context.bot.send_message(chat_id=ADMIN_ID, text=f"🔴 <b>SL HIT: {trade['coin']}</b>\n❌ Closed at {status}.", parse_mode='HTML')
