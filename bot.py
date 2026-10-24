@@ -30,7 +30,7 @@ top_30_coins = [
 ]
 
 tracked_coins = top_30_coins 
-timeframes = ['1h', '4h'] # Background scan
+timeframes = ['1h', '4h'] 
 
 # Toggles
 FILTER_CORE = True
@@ -41,10 +41,16 @@ FILTER_RSI = True
 # 🏆 PROFESSIONAL SETTINGS 🏆
 MAX_ACTIVE_TRADES = 3    
 ATR_MULTIPLIER = 1.5     
-MIN_SL_PERCENTAGE = 0.01 # 🛡️ FIX: Minimum Stop Loss 1% (ATR Floor)
+MIN_SL_PERCENTAGE = 0.01 
 
 # Global Locks
 is_scanning = False 
+
+# Helper function for formatting prices correctly
+def fmt(price):
+    if price < 0.01: return f"{price:.8f}"
+    elif price < 1: return f"{price:.6f}"
+    else: return f"{price:.4f}"
 
 # ==========================================
 # 2. SESSION FILTER FUNCTION
@@ -158,7 +164,6 @@ def run_market_scan(scan_mode, scan_tf):
             signal, price, details, atr_val = check_signal(coin, scan_tf, filters_config)
             
             if signal in ["BUY", "SELL"]:
-                # 🛡️ ATR FLOOR FIX: SL kam az kam 1% hoga
                 sl_dist = max(atr_val * ATR_MULTIPLIER, price * MIN_SL_PERCENTAGE)
                 
                 if signal == "BUY":
@@ -183,8 +188,8 @@ def run_market_scan(scan_mode, scan_tf):
         result_text += "🚀 <b>Signals Found:</b>\n\n"
         for res in results:
             result_text += f"<b>{res['coin']}</b> ({res['signal']})\n"
-            result_text += f"💵 Entry: <code>{res['price']:.4f}</code>\n"
-            result_text += f"🛑 SL: <code>{res['sl']:.4f}</code> | 🎯 TP1: <code>{res['tp1']:.4f}</code>\n\n"
+            result_text += f"💵 Entry: <code>{fmt(res['price'])}</code>\n"
+            result_text += f"🛑 SL: <code>{fmt(res['sl'])}</code> | 🎯 TP1: <code>{fmt(res['tp1'])}</code>\n\n"
             
         return result_text
     except Exception as e:
@@ -277,7 +282,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 current_price = entry
             status = "🟢 Profit" if (direction == "LONG" and current_price > entry) or (direction == "SHORT" and current_price < entry) else "🔴 Loss"
-            text += f"<b>{coin} ({tf}) {direction}</b>\nEntry: <code>{entry:.4f}</code> | Now: <code>{current_price:.4f}</code>\nSL: <code>{sl:.4f}</code> | TP1: <code>{tp1:.4f}</code>\nStatus: {status}\n\n"
+            text += f"<b>{coin} ({tf}) {direction}</b>\nEntry: <code>{fmt(entry)}</code> | Now: <code>{fmt(current_price)}</code>\nSL: <code>{fmt(sl)}</code> | TP1: <code>{fmt(tp1)}</code>\nStatus: {status}\n\n"
             keyboard.append([InlineKeyboardButton(f"❌ Cancel {coin}", callback_data=f"cancel_{trade_id}")])
         keyboard.append([InlineKeyboardButton("🔙 Back", callback_data='main_menu')])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -360,7 +365,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         report = (f"<b>Analysis: {coin} ({selected_tf})</b>\n"
-                  f"💵 Current Price: <code>{price:.4f}</code>\n"
+                  f"💵 Current Price: <code>{fmt(price)}</code>\n"
                   f"📊 Status: <b>{signal}</b>\n\n"
                   f"<b>Conditions Met:</b>\n{details}")
                   
@@ -510,7 +515,6 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                 trade_id = f"{coin}_{tf}_{signal}"
                 if trade_id not in active_trades:
                     
-                    # 🛡️ ATR FLOOR FIX: Minimum SL 1%
                     sl_dist = max(atr_val * ATR_MULTIPLIER, price * MIN_SL_PERCENTAGE)
                     
                     if signal == "BUY":
@@ -528,10 +532,10 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                     save_state(active_trades)
                     
                     msg = (f"{emoji} <b>{direction}: {coin}</b> ({tf})\n\n"
-                           f"💵 Entry: <code>{price:.4f}</code>\n"
-                           f"🛑 SL: <code>{sl:.4f}</code> (ATR Floor: 1%)\n"
-                           f"🎯 TP1 (50%): <code>{tp1:.4f}</code>\n"
-                           f"🎯 TP2 (50%): <code>{tp2:.4f}</code>\n\n"
+                           f"💵 Entry: <code>{fmt(price)}</code>\n"
+                           f"🛑 SL: <code>{fmt(sl)}</code> (ATR Floor: 1%)\n"
+                           f"🎯 TP1 (50%): <code>{fmt(tp1)}</code>\n"
+                           f"🎯 TP2 (50%): <code>{fmt(tp2)}</code>\n\n"
                            f"<b>Details:</b>\n{details}")
                     await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='HTML')
 
@@ -548,7 +552,7 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                 trade['sl'] = entry
                 trade['sl_moved'] = True
                 save_state(active_trades)
-                await context.bot.send_message(chat_id=ADMIN_ID, text=f"🎯 <b>TP1 HIT: {trade['coin']}</b>\n✅ 50% Booked. SL moved to Breakeven (<code>{entry:.4f}</code>).", parse_mode='HTML')
+                await context.bot.send_message(chat_id=ADMIN_ID, text=f"🎯 <b>TP1 HIT: {trade['coin']}</b>\n✅ 50% Booked. SL moved to Breakeven (<code>{fmt(entry)}</code>).", parse_mode='HTML')
         
         if (direction == "LONG" and current_price >= tp2) or (direction == "SHORT" and current_price <= tp2):
             await context.bot.send_message(chat_id=ADMIN_ID, text=f"🏆 <b>TP2 HIT: {trade['coin']}</b>\n✅ Full Trade Closed.", parse_mode='HTML')
