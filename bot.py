@@ -25,7 +25,7 @@ tracked_coins = [
 ]
 timeframes = ['1h', '4h']
 
-# Toggles
+# Toggles (Settings)
 FILTER_CORE = True
 FILTER_MTF = True
 FILTER_VOLUME = True
@@ -39,7 +39,7 @@ ATR_MULTIPLIER = 1.5     # SL set karne ke liye ATR ka kitna guna use karna hai
 is_scanning = False 
 
 # ==========================================
-# 2. FLASK WEB SERVER (Keep-Alive)
+# 2. FLASK WEB SERVER (Render Keep-Alive)
 # ==========================================
 app = Flask(__name__)
 
@@ -89,7 +89,8 @@ def get_main_menu():
         [InlineKeyboardButton("🔍 Analyze Coin", callback_data='analyze_coin')],
         [InlineKeyboardButton("📊 Manage Coins", callback_data='manage_coins')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings'), 
-         InlineKeyboardButton("ℹ️ Help", callback_data='help')]
+         InlineKeyboardButton("🔄 System Controls", callback_data='sys_controls')],
+        [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
     ]
     text = (
         "💼 <b>PRO TRADING TERMINAL</b> 💼\n\n"
@@ -144,15 +145,14 @@ def run_market_scan(scan_mode):
             signal, price, details, atr_val = check_signal(coin, '1h', filters_config)
             
             if signal in ["BUY", "SELL"]:
-                # ATR Based SL & TP Calculation
                 sl_dist = atr_val * ATR_MULTIPLIER
                 if signal == "BUY":
                     sl = price - sl_dist
-                    tp1 = price + (sl_dist * 2) # 1:2 RR
+                    tp1 = price + (sl_dist * 2) 
                     direction = "🟢 LONG"
                 else:
                     sl = price + sl_dist
-                    tp1 = price - (sl_dist * 2) # 1:2 RR
+                    tp1 = price - (sl_dist * 2) 
                     direction = "🔴 SHORT"
                 
                 results.append({"coin": coin, "signal": direction, "price": price, "sl": sl, "tp1": tp1})
@@ -180,7 +180,7 @@ def run_market_scan(scan_mode):
 # 7. BUTTON HANDLER
 # ==========================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global is_scanning, FILTER_CORE, FILTER_MTF, FILTER_VOLUME, FILTER_RSI
+    global is_scanning, FILTER_CORE, FILTER_MTF, FILTER_VOLUME, FILTER_RSI, active_trades
     
     query = update.callback_query
     if query.from_user.id != ADMIN_ID:
@@ -196,6 +196,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, reply_markup = get_scan_menu()
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
+    # --- SYSTEM CONTROLS ---
+    elif query.data == 'sys_controls':
+        keyboard = [
+            [InlineKeyboardButton("🧹 Clear Active Trades", callback_data='clear_trades')],
+            [InlineKeyboardButton("🔄 Refresh Memory", callback_data='reload_state')],
+            [InlineKeyboardButton("🛑 Force Restart Bot", callback_data='force_restart')],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]
+        ]
+        await query.edit_message_text("🔄 <b>System Controls</b>\n\nYahan se bot ki memory clear ya restart kar sakte hain:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+    elif query.data == 'clear_trades':
+        active_trades.clear()
+        save_state(active_trades)
+        await query.edit_message_text("✅ <b>Active Trades Cleared!</b>\nBot ki memory se sab trades hata di gayi hain.", 
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='sys_controls')]]), parse_mode='HTML')
+
+    elif query.data == 'reload_state':
+        active_trades = load_state()
+        await query.edit_message_text(f"🔄 <b>Memory Refreshed!</b>\nLoaded {len(active_trades)} active trades from disk.", 
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='sys_controls')]]), parse_mode='HTML')
+
+    elif query.data == 'force_restart':
+        await query.edit_message_text("🛑 <b>Restarting Bot...</b>\nRender will automatically bring it back online in 10-20 seconds.", parse_mode='HTML')
+        await asyncio.sleep(2)
+        os._exit(0) # Forces Render to restart the service
+
+    # --- SCAN EXECUTION ---
     elif query.data.startswith('run_scan_'):
         if is_scanning:
             await query.answer("⏳ A scan is already in progress. Please wait...", show_alert=True)
@@ -209,6 +236,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         finally:
             is_scanning = False 
 
+    # --- ACTIVE TRADES ---
     elif query.data == 'active_trades':
         if not active_trades:
             await query.edit_message_text("📭 <b>No Active Trades.</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
@@ -240,6 +268,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_state(active_trades)
         await query.edit_message_text(f"🗑️ Trade <code>{trade_id}</code> cancelled successfully.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='active_trades')]]), parse_mode='HTML')
 
+    # --- MARKET SUMMARY ---
     elif query.data == 'market_summary':
         await query.edit_message_text("⏳ Fetching Basic Trend (9/21 EMA)...")
         summary_text = "🌐 <b>TOP COINS BASIC TREND (1H)</b>\n\n"
@@ -250,15 +279,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         summary_text += "\n<i>Yeh sirf basic EMA 9/21 trend hai.</i>"
         await query.edit_message_text(summary_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data='market_summary'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
+    # --- ANALYZE COIN ---
     elif query.data == 'analyze_coin':
         await query.edit_message_text("🔍 <b>Coin Analysis</b>\n\nPlease send the coin name like this:\n<code>BTC/USDT</code>\n\nOr simply type: <code>BTC</code>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
         context.user_data['awaiting_coin'] = True
 
+    # --- MANAGE COINS ---
     elif query.data == 'manage_coins':
         coins_list = "\n".join([f"• {coin}" for coin in tracked_coins])
         text = f"📊 <b>Tracked Coins ({len(tracked_coins)}):</b>\n{coins_list}\n\n<b>Add:</b> <code>/add DOGE</code>\n<b>Remove:</b> <code>/remove DOGE</code>"
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
+    # --- SETTINGS ---
     elif query.data == 'settings':
         keyboard = [
             [InlineKeyboardButton(f"Core Strategy: {'🟢 ON' if FILTER_CORE else '🔴 OFF'}", callback_data='toggle_core')],
@@ -274,13 +306,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'toggle_vol': FILTER_VOLUME = not FILTER_VOLUME; await button_handler(update, context)
     elif query.data == 'toggle_rsi': FILTER_RSI = not FILTER_RSI; await button_handler(update, context)
 
+    # --- HELP ---
     elif query.data == 'help':
         help_text = (
             "ℹ️ <b>Terminal Guide</b>\n\n"
             "1️⃣ <b>Scan Top 100:</b> 5 alag options se market scan karein.\n"
             "2️⃣ <b>Active Trades:</b> Live positions ka status.\n"
             "3️⃣ <b>Analyze Coin:</b> Kisi ek coin ka manual analysis.\n"
-            "4️⃣ <b>Manage Coins:</b> <code>/add</code> / <code>/remove</code>.\n\n"
+            "4️⃣ <b>Manage Coins:</b> <code>/add</code> / <code>/remove</code>.\n"
+            "5️⃣ <b>System Controls:</b> Clear, Refresh, Restart.\n\n"
             "🏆 <b>Pro Features:</b> ATR Dynamic SL, Max 3 Trades."
         )
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
@@ -366,8 +400,6 @@ def check_signal(symbol, timeframe, filters):
         df['ROC'] = ta.momentum.ROCIndicator(close=df['close'], window=9).roc()
         df['RSI'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
         df['Vol_SMA'] = df['volume'].rolling(window=20).mean()
-        
-        # 🏆 PROFESSIONAL FIX: ATR Calculation
         df['ATR'] = ta.volatility.AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
         
         c_close, c_low, c_high = df['close'].iloc[-1], df['low'].iloc[-1], df['high'].iloc[-1]
@@ -376,7 +408,7 @@ def check_signal(symbol, timeframe, filters):
         c_adx, p_adx = df['ADX'].iloc[-1], df['ADX'].iloc[-2]
         c_roc, c_rsi = df['ROC'].iloc[-1], df['RSI'].iloc[-1]
         c_vol, c_vol_sma = df['volume'].iloc[-1], df['Vol_SMA'].iloc[-1]
-        current_atr = df['ATR'].iloc[-1]  # ATR Value
+        current_atr = df['ATR'].iloc[-1]
         
         signal = "WAIT"
         details = ""
@@ -432,9 +464,8 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     global active_trades
     bg_filters = {"core": FILTER_CORE, "mtf": FILTER_MTF, "vol": FILTER_VOLUME, "rsi": FILTER_RSI}
     
-    # 🏆 PROFESSIONAL FIX: Max Trades Check
     if len(active_trades) >= MAX_ACTIVE_TRADES:
-        return # Agar 3 trades active hain, toh naye signals skip karo
+        return 
     
     for coin in tracked_coins:
         for tf in timeframes:
@@ -442,19 +473,17 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
             if signal in ["BUY", "SELL"]:
                 trade_id = f"{coin}_{tf}_{signal}"
                 if trade_id not in active_trades:
-                    
-                    # 🏆 PROFESSIONAL FIX: ATR Dynamic SL & TP
                     sl_dist = atr_val * ATR_MULTIPLIER
                     
                     if signal == "BUY":
                         sl = price - sl_dist
-                        tp1 = price + (sl_dist * 2)  # 1:2 RR
-                        tp2 = price + (sl_dist * 4)  # 1:4 RR
+                        tp1 = price + (sl_dist * 2) 
+                        tp2 = price + (sl_dist * 4) 
                         emoji, direction = "🟢", "LONG"
                     else:
                         sl = price + sl_dist
-                        tp1 = price - (sl_dist * 2)  # 1:2 RR
-                        tp2 = price - (sl_dist * 4)  # 1:4 RR
+                        tp1 = price - (sl_dist * 2) 
+                        tp2 = price - (sl_dist * 4) 
                         emoji, direction = "🔴", "SHORT"
                     
                     active_trades[trade_id] = {"coin": coin, "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2, "type": direction, "tp1_hit": False, "sl_moved": False}
