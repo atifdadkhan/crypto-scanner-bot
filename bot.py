@@ -30,7 +30,7 @@ top_30_coins = [
 ]
 
 tracked_coins = top_30_coins 
-timeframes = ['1h', '4h']
+timeframes = ['1h', '4h'] # Background scan
 
 # Toggles
 FILTER_CORE = True
@@ -41,6 +41,7 @@ FILTER_RSI = True
 # 🏆 PROFESSIONAL SETTINGS 🏆
 MAX_ACTIVE_TRADES = 3    
 ATR_MULTIPLIER = 1.5     
+MIN_SL_PERCENTAGE = 0.01 # 🛡️ FIX: Minimum Stop Loss 1% (ATR Floor)
 
 # Global Locks
 is_scanning = False 
@@ -120,14 +121,12 @@ def get_main_menu():
 
 def get_scan_menu():
     keyboard = [
-        [InlineKeyboardButton("🔥 Scan ALL Filters (Top 30)", callback_data='run_scan_all')],
-        [InlineKeyboardButton("📊 Scan Core Only", callback_data='run_scan_core')],
-        [InlineKeyboardButton("🌐 Scan MTF Only", callback_data='run_scan_mtf')],
-        [InlineKeyboardButton("📈 Scan Volume Only", callback_data='run_scan_vol')],
-        [InlineKeyboardButton("📉 Scan RSI Only", callback_data='run_scan_rsi')],
+        [InlineKeyboardButton("⚡ Scan 15m (Checks 1h)", callback_data='scan_tf_15m')],
+        [InlineKeyboardButton("⚡ Scan 1h (Checks 4h)", callback_data='scan_tf_1h')],
+        [InlineKeyboardButton("⚡ Scan 4h (Checks 1d)", callback_data='scan_tf_4h')],
         [InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]
     ]
-    text = "🔎 <b>MARKET SCANNER</b>\n\nKis filter ke hisaab se Top 30 Strong Coins scan karne hain?"
+    text = "🔎 <b>MARKET SCANNER</b>\n\nSelect Timeframe for Top 30 Scan (Pairwise MTF will apply):"
     return text, InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -141,7 +140,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==========================================
 # 7. BACKGROUND MARKET SCANNER LOGIC
 # ==========================================
-def run_market_scan(scan_mode):
+def run_market_scan(scan_mode, scan_tf):
     try:
         results = []
         scanned_names = []
@@ -156,11 +155,12 @@ def run_market_scan(scan_mode):
                 "rsi": True if scan_mode in ['all', 'rsi'] else False
             }
             
-            # Background scan hamesha 1H par chalega aur 4H check karega
-            signal, price, details, atr_val = check_signal(coin, '1h', filters_config)
+            signal, price, details, atr_val = check_signal(coin, scan_tf, filters_config)
             
             if signal in ["BUY", "SELL"]:
-                sl_dist = atr_val * ATR_MULTIPLIER
+                # 🛡️ ATR FLOOR FIX: SL kam az kam 1% hoga
+                sl_dist = max(atr_val * ATR_MULTIPLIER, price * MIN_SL_PERCENTAGE)
+                
                 if signal == "BUY":
                     sl = price - sl_dist
                     tp1 = price + (sl_dist * 2) 
@@ -173,7 +173,7 @@ def run_market_scan(scan_mode):
                 results.append({"coin": coin, "signal": direction, "price": price, "sl": sl, "tp1": tp1})
         
         proof_text = ", ".join(scanned_names)
-        result_text = f"🔎 <b>SCAN COMPLETE ({scan_mode.upper()} MODE)</b>\n\n"
+        result_text = f"🔎 <b>SCAN COMPLETE ({scan_mode.upper()} on {scan_tf.upper()})</b>\n\n"
         result_text += f"<b>Coins Scanned ({len(scanned_names)}):</b>\n<i>{proof_text}</i>\n\n-----------------------------------\n\n"
         
         if not results:
@@ -210,7 +210,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, reply_markup = get_scan_menu()
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
-    # --- SYSTEM CONTROLS ---
+    elif query.data.startswith('scan_tf_'):
+        tf = query.data.replace('scan_tf_', '')
+        keyboard = [
+            [InlineKeyboardButton(f"🔥 ALL Filters ({tf})", callback_data=f'run_scan_all_{tf}')],
+            [InlineKeyboardButton(f"📊 Core Only ({tf})", callback_data=f'run_scan_core_{tf}')],
+            [InlineKeyboardButton("🔙 Back", callback_data='scan_menu')]
+        ]
+        await query.edit_message_text(f"🔎 <b>Scan Top 30 on {tf.upper()}</b>\nSelect Filters:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
     elif query.data == 'sys_controls':
         keyboard = [
             [InlineKeyboardButton("🧹 Clear Active Trades", callback_data='clear_trades')],
@@ -234,21 +242,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(2)
         os._exit(0)
 
-    # --- SCAN EXECUTION ---
     elif query.data.startswith('run_scan_'):
         if is_scanning:
             await query.answer("⏳ A scan is already in progress...", show_alert=True)
             return
         is_scanning = True
-        scan_mode = query.data.replace('run_scan_', '')
-        await query.edit_message_text(f"⏳ <b>Scanning Top 30 ({scan_mode.upper()})...</b>", parse_mode='HTML')
+        parts = query.data.replace('run_scan_', '').split('_')
+        scan_mode = parts[0] 
+        scan_tf = parts[1] 
+
+        await query.edit_message_text(f"⏳ <b>Scanning Top 30 ({scan_mode.upper()} on {scan_tf})...</b>", parse_mode='HTML')
         try:
-            result_text = await asyncio.to_thread(run_market_scan, scan_mode)
+            result_text = await asyncio.to_thread(run_market_scan, scan_mode, scan_tf)
             await query.edit_message_text(result_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='scan_menu'), InlineKeyboardButton("🏠 Main Menu", callback_data='main_menu')]]), parse_mode='HTML')
         finally:
             is_scanning = False 
 
-    # --- ACTIVE TRADES ---
     elif query.data == 'active_trades':
         if not active_trades:
             await query.edit_message_text("📭 <b>No Active Trades.</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
@@ -280,7 +289,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_state(active_trades)
         await query.edit_message_text(f"🗑️ Trade cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='active_trades')]]), parse_mode='HTML')
 
-    # --- MARKET SUMMARY ---
     elif query.data == 'market_summary':
         await query.edit_message_text("⏳ Fetching Basic Trend (9/21 EMA) for 30 coins...")
         summary_text = "🌐 <b>TOP 30 COINS BASIC TREND (1H)</b>\n\n"
@@ -291,7 +299,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         summary_text += "\n<i>Yeh sirf basic EMA 9/21 trend hai.</i>"
         await query.edit_message_text(summary_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data='market_summary'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
-    # --- ANALYZE COIN (TIMEFRAME SELECTION) ---
     elif query.data == 'analyze_coin':
         keyboard = [
             [InlineKeyboardButton("15m", callback_data='tf_15m'), InlineKeyboardButton("1h", callback_data='tf_1h')],
@@ -306,13 +313,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting_coin'] = True
         await query.edit_message_text(f"✅ Timeframe set to <b>{selected_tf}</b>.\n\nPlease send the coin name like this:\n<code>BTC/USDT</code>\n\nOr simply type: <code>BTC</code>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
-    # --- MANAGE COINS ---
     elif query.data == 'manage_coins':
         coins_list = "\n".join([f"• {coin}" for coin in tracked_coins])
         text = f"📊 <b>Tracked Coins ({len(tracked_coins)}):</b>\n{coins_list}\n\n<b>Add:</b> <code>/add DOGE</code>\n<b>Remove:</b> <code>/remove DOGE</code>"
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
-    # --- SETTINGS ---
     elif query.data == 'settings':
         keyboard = [
             [InlineKeyboardButton(f"Core Strategy: {'🟢 ON' if FILTER_CORE else '🔴 OFF'}", callback_data='toggle_core')],
@@ -328,9 +333,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'toggle_vol': FILTER_VOLUME = not FILTER_VOLUME; await button_handler(update, context)
     elif query.data == 'toggle_rsi': FILTER_RSI = not FILTER_RSI; await button_handler(update, context)
 
-    # --- HELP ---
     elif query.data == 'help':
-        help_text = "ℹ️ <b>Guide</b>\n\nYeh bot aapko timeframe select karne ki ijazat deta hai. Ab MTF logic 'Pairwise' hai:\n- 15m ke liye 1H check hoga\n- 1H ke liye 4H check hoga\n- 4H ke liye 1D check hoga."
+        help_text = "ℹ️ <b>Guide</b>\n\nYeh bot aapko timeframe select karne ki ijazat deta hai. Ab MTF logic 'Pairwise' hai:\n- 15m ke liye 1H check hoga\n- 1H ke liye 4H check hoga\n- 4H ke liye 1D check hoga.\n\n🛡️ ATR Floor: Minimum SL 1% set hai."
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
 # ==========================================
@@ -394,7 +398,7 @@ async def remove_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: /remove DOGE")
 
 # ==========================================
-# 11. SIGNAL ENGINES (Pairwise MTF Logic)
+# 11. SIGNAL ENGINES
 # ==========================================
 def get_basic_trend(symbol, timeframe):
     try:
@@ -432,7 +436,6 @@ def check_signal(symbol, timeframe, filters):
         signal = "WAIT"
         details = ""
         
-        # Whale Protection Filter
         candle_range = c_high - c_low
         if candle_range == 0: return "WAIT", c_close, "❌ No Movement.", current_atr
         upper_wick = c_high - max(c_open, c_close)
@@ -459,7 +462,6 @@ def check_signal(symbol, timeframe, filters):
             if c_ema9 > c_ema21: signal = "BUY"
             elif c_ema9 < c_ema21: signal = "SELL"
             
-        # 🛡️ PAIRWISE MTF LOGIC (Multi-Timeframe Confirmation)
         if filters.get("mtf"):
             higher_tf = None
             if timeframe == '15m': higher_tf = '1h'
@@ -502,12 +504,14 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     if len(active_trades) >= MAX_ACTIVE_TRADES: return 
     
     for coin in tracked_coins:
-        for tf in timeframes: # Background scan checks 1h and 4h
+        for tf in timeframes: 
             signal, price, details, atr_val = check_signal(coin, tf, bg_filters)
             if signal in ["BUY", "SELL"]:
                 trade_id = f"{coin}_{tf}_{signal}"
                 if trade_id not in active_trades:
-                    sl_dist = atr_val * ATR_MULTIPLIER
+                    
+                    # 🛡️ ATR FLOOR FIX: Minimum SL 1%
+                    sl_dist = max(atr_val * ATR_MULTIPLIER, price * MIN_SL_PERCENTAGE)
                     
                     if signal == "BUY":
                         sl = price - sl_dist
@@ -525,7 +529,7 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                     
                     msg = (f"{emoji} <b>{direction}: {coin}</b> ({tf})\n\n"
                            f"💵 Entry: <code>{price:.4f}</code>\n"
-                           f"🛑 SL: <code>{sl:.4f}</code> (ATR Based)\n"
+                           f"🛑 SL: <code>{sl:.4f}</code> (ATR Floor: 1%)\n"
                            f"🎯 TP1 (50%): <code>{tp1:.4f}</code>\n"
                            f"🎯 TP2 (50%): <code>{tp2:.4f}</code>\n\n"
                            f"<b>Details:</b>\n{details}")
