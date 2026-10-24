@@ -5,7 +5,7 @@ import pandas as pd
 import ta
 import threading
 import asyncio
-import datetime # Updated import for time
+import datetime
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -42,9 +42,7 @@ is_scanning = False
 # 2. SESSION FILTER FUNCTION
 # ==========================================
 def is_trading_session():
-    # Render ka server UTC time par chalta hai (PKT is UTC+5)
-    # London/New York best session: 12:00 PM PKT to 1:00 AM PKT
-    # In UTC terms: 07:00 AM UTC to 20:00 PM UTC (8 PM)
+    # Render ka server UTC time par chalta hai. Best session: 07:00 AM to 20:00 PM UTC
     now_utc = datetime.datetime.utcnow()
     current_hour = now_utc.hour
     
@@ -142,15 +140,26 @@ def run_market_scan(scan_mode):
     try:
         tickers = exchange.fetch_tickers()
         
+        # 🛑 BITGET TOKENIZED STOCKS BLACKLIST (In nakli stocks ko filter karne ke liye)
+        stock_tokens = [
+            'RMU', 'RBE', 'RT', 'RVZ', 'RGE', 'RVO', 'RV', 'RKO', 'RPG', 'RMS', 
+            'RMA', 'RGS', 'RNU', 'RHD', 'RBX', 'RBA', 'RZS', 'RC', 'RCB', 'RPH', 
+            'RMO', 'RPM', 'RWM', 'RSO', 'RTT', 'RQQQ', 'RAMZN', 'RAAPL', 'RSPCX', 
+            'RAMD', 'RIWM', 'RAVGO', 'RHYG', 'RSOXL', 'RBIL', 'RIEF', 'RIVV', 
+            'REWZ', 'RSHV', 'RPLTR', 'RLLY', 'RGEV', 'RCOST', 'RTLT', 'RCRWD'
+        ]
+        
         usdt_pairs = {}
         for k, v in tickers.items():
             if k.endswith('/USDT') and v.get('quoteVolume'):
                 base_coin = k.replace('/USDT', '')
                 
-                # Filter out tokenized stocks
-                if base_coin.startswith('R') and len(base_coin) > 3 and base_coin[1:].isupper():
-                    continue 
-                if base_coin in ['USDC', 'FDUSD', 'TUSD', 'USDP']: 
+                # 1. Stock tokens filter
+                if base_coin in stock_tokens:
+                    continue
+                
+                # 2. Stablecoins filter
+                if base_coin in ['USDC', 'FDUSD', 'TUSD', 'USDP', 'DAI']: 
                     continue
                     
                 usdt_pairs[k] = v
@@ -406,7 +415,7 @@ async def remove_coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: /remove DOGE")
 
 # ==========================================
-# 11. SIGNAL ENGINES (Basic & Advanced)
+# 11. SIGNAL ENGINES
 # ==========================================
 def get_basic_trend(symbol, timeframe):
     try:
@@ -497,7 +506,7 @@ def check_signal(symbol, timeframe, filters):
         return "ERROR", 0, "", 0
 
 # ==========================================
-# 12. BACKGROUND SCANNER & TRADE MANAGER (Session Filter Applied)
+# 12. BACKGROUND SCANNER & TRADE MANAGER
 # ==========================================
 async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     global active_trades
@@ -505,7 +514,7 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     
     # 🕒 SESSION FILTER CHECK
     if not is_trading_session():
-        return # Bot rest karega agar out of session hai
+        return 
     
     if len(active_trades) >= MAX_ACTIVE_TRADES:
         return 
@@ -568,7 +577,7 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
             save_state(active_trades)
 
 # ==========================================
-# 13. HEARTBEAT SYSTEM (With Session Status)
+# 13. HEARTBEAT SYSTEM
 # ==========================================
 async def heartbeat_status(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now().strftime("%I:%M %p")
