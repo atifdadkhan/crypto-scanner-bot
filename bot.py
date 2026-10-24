@@ -39,7 +39,7 @@ FILTER_VOLUME = True
 FILTER_RSI = True
 
 # 🏆 PROFESSIONAL SETTINGS 🏆
-MAX_ACTIVE_TRADES = 3    
+# MAX_ACTIVE_TRADES hata diya gaya hai
 ATR_MULTIPLIER = 1.5     
 MIN_SL_PERCENTAGE = 0.01 
 
@@ -506,7 +506,8 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
     bg_filters = {"core": FILTER_CORE, "mtf": FILTER_MTF, "vol": FILTER_VOLUME, "rsi": FILTER_RSI}
     
     if not is_trading_session(): return 
-    if len(active_trades) >= MAX_ACTIVE_TRADES: return 
+    
+    # Limit hata di gayi hai. Ab bot jitne bhi signals banenge sab track karega.
     
     for coin in tracked_coins:
         for tf in timeframes: 
@@ -578,7 +579,7 @@ async def heartbeat_status(context: ContextTypes.DEFAULT_TYPE):
     scanned_msg = f"✅ <b>Heartbeat Status ({now})</b>\n\n"
     scanned_msg += f"🤖 Bot Status: {status_text}\n"
     scanned_msg += f"📊 Tracking {len(tracked_coins)} coins.\n"
-    scanned_msg += f"📈 Active Trades: {active_count}/{MAX_ACTIVE_TRADES}\n\n"
+    scanned_msg += f"📈 Total Signals Tracked: {active_count}\n\n"
     
     if is_active and active_count == 0:
         scanned_msg += "<i>Abhi tak koi strong signal nahi mila. Market scan jari hai...</i>"
