@@ -24,10 +24,14 @@ tracked_coins = [
 ]
 timeframes = ['1h', '4h']
 
+# Filters
 FILTER_CORE = True
 FILTER_MTF = True
 FILTER_VOLUME = True
 FILTER_RSI = True
+
+# Global Locks
+is_scanning = False # Prevents double clicking scan button
 
 # ==========================================
 # 2. FLASK WEB SERVER (Keep-Alive)
@@ -43,17 +47,24 @@ def run_flask():
     app.run(host='0.0.0.0', port=port)
 
 # ==========================================
-# 3. STATE MANAGEMENT
+# 3. STATE MANAGEMENT (Corruption Safe)
 # ==========================================
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, 'r') as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print("⚠️ State file corrupted. Resetting...")
+            return {}
     return {}
 
 def save_state(state):
-    with open(STATE_FILE, 'w') as f:
-        json.dump(state, f)
+    try:
+        with open(STATE_FILE, 'w') as f:
+            json.dump(state, f)
+    except Exception as e:
+        print(f"⚠️ Could not save state: {e}")
 
 active_trades = load_state()
 
@@ -97,46 +108,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 6. BACKGROUND MARKET SCANNER LOGIC
 # ==========================================
 def run_market_scan():
-    """Yeh function background mein 100 coins ko scan karega taake bot hang na ho"""
     try:
-        # 1. Fetch all tickers to find top 100 by volume
         tickers = exchange.fetch_tickers()
         usdt_pairs = {k: v for k, v in tickers.items() if k.endswith('/USDT') and v.get('quoteVolume')}
         
-        # 2. Sort by volume (descending) and take top 100
+        # Top 100 by volume
         sorted_pairs = sorted(usdt_pairs.items(), key=lambda x: x[1]['quoteVolume'], reverse=True)
         top_100_coins = [k for k, v in sorted_pairs[:100]]
 
         results = []
         
-        # 3. Scan each coin (sirf 1h timeframe par taake time kam lage)
         for coin in top_100_coins:
             signal, price, details = check_signal(coin, '1h')
             
             if signal in ["BUY", "SELL"]:
-                # Professional Risk Calculation
                 if signal == "BUY":
-                    sl = price * 0.985  # -1.5%
-                    tp1 = price * 1.03  # +3%
+                    sl, tp1 = price * 0.985, price * 1.03 
                     direction = "🟢 LONG"
                 else:
-                    sl = price * 1.015  # +1.5%
-                    tp1 = price * 0.97  # -3%
+                    sl, tp1 = price * 1.015, price * 0.97 
                     direction = "🔴 SHORT"
                 
-                results.append({
-                    "coin": coin,
-                    "signal": direction,
-                    "price": price,
-                    "sl": sl,
-                    "tp1": tp1
-                })
+                results.append({"coin": coin, "signal": direction, "price": price, "sl": sl, "tp1": tp1})
         
-        # 4. Format the results
         if not results:
-            return "🔎 <b>Market Scan Complete</b>\n\nMarket ke Top 100 coins mein abhi koi clear signal nahi mila. Please WAIT karein."
+            return "🔎 <b>Market Scan Complete</b>\n\nTop 100 coins mein abhi koi clear signal nahi mila. WAIT karein."
             
-        result_text = "🚀 <b>TOP 100 MARKET SCAN RESULTS</b>\n\n"
+        result_text = "🚀 <b>TOP 100 MARKET SCAN</b>\n\n"
         result_text += "Yeh woh coins hain jahan abhi trade ban rahi hai:\n\n"
         
         for res in results:
@@ -144,7 +142,7 @@ def run_market_scan():
             result_text += f"💵 Entry: <code>{res['price']:.4f}</code>\n"
             result_text += f"🛑 SL: <code>{res['sl']:.4f}</code> | 🎯 TP1: <code>{res['tp1']:.4f}</code>\n\n"
             
-        result_text += "<i>Note: Yeh sirf 1H timeframe ka scan hai. Entry lene se pehle chart confirm karein.</i>"
+        result_text += "<i>Note: Yeh 1H timeframe ka scan hai. Entry se pehle chart confirm karein.</i>"
         return result_text
         
     except Exception as e:
@@ -155,6 +153,8 @@ def run_market_scan():
 # 7. BUTTON HANDLER
 # ==========================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global is_scanning, FILTER_CORE, FILTER_MTF, FILTER_VOLUME, FILTER_RSI
+    
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -163,25 +163,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     await query.answer()
-    global FILTER_CORE, FILTER_MTF, FILTER_VOLUME, FILTER_RSI
     
-    # --- MAIN MENU ---
     if query.data == 'main_menu':
         text, reply_markup = get_main_menu()
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
-    # --- NEW: SCAN TOP 100 ---
+    # --- SCAN TOP 100 (Lock Protected) ---
     elif query.data == 'scan_top_100':
-        await query.edit_message_text("⏳ <b>Scanning Top 100 Coins by Volume...</b>\n\nIsme taqreeban 1 se 2 minute lag sakte hain. Please wait, main result tayar karke bhej raha hoon...", parse_mode='HTML')
+        if is_scanning:
+            await query.answer("⏳ A scan is already in progress. Please wait...", show_alert=True)
+            return
+            
+        is_scanning = True
+        await query.edit_message_text("⏳ <b>Scanning Top 100 Coins by Volume...</b>\n\nPlease wait 1-2 minutes. Main result tayar karke bhej raha hoon...", parse_mode='HTML')
         
-        # Async threading taake bot hang na ho
-        result_text = await asyncio.to_thread(run_market_scan)
-        
-        await query.edit_message_text(result_text, 
-                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Scan Again", callback_data='scan_top_100'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), 
-                                      parse_mode='HTML')
+        try:
+            result_text = await asyncio.to_thread(run_market_scan)
+            await query.edit_message_text(result_text, 
+                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Scan Again", callback_data='scan_top_100'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), 
+                                          parse_mode='HTML')
+        finally:
+            is_scanning = False # Lock Release
 
-    # --- 1. ACTIVE TRADES ---
+    # --- ACTIVE TRADES (Lightweight API) ---
     elif query.data == 'active_trades':
         if not active_trades:
             await query.edit_message_text("📭 <b>No Active Trades.</b>\nBot abhi kisi trade ko track nahi kar raha.", 
@@ -198,9 +202,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sl = trade['sl']
             tp1 = trade['tp1']
             
+            # FAST API FIX: fetch_ticker instead of fetch_ohlcv
             try:
-                current_price = exchange.fetch_ohlcv(trade['coin'], '1m', limit=1)[0][4]
-            except:
+                current_price = exchange.fetch_ticker(trade['coin'])['last']
+            except Exception:
                 current_price = entry
                 
             status = "🟢 In Profit" if (direction == "LONG" and current_price > entry) or (direction == "SHORT" and current_price < entry) else "🔴 In Loss"
@@ -223,7 +228,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"🗑️ Trade <code>{trade_id}</code> cancelled successfully.", 
                                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='active_trades')]]), parse_mode='HTML')
 
-    # --- 2. MARKET SUMMARY ---
+    # --- MARKET SUMMARY ---
     elif query.data == 'market_summary':
         await query.edit_message_text("⏳ Fetching Market Summary...")
         summary_text = "🌐 <b>TOP COINS TREND (1H)</b>\n\n"
@@ -236,20 +241,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(summary_text, 
                                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data='market_summary'), InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
-    # --- 3. ANALYZE COIN (Unchanged) ---
+    # --- ANALYZE COIN ---
     elif query.data == 'analyze_coin':
         await query.edit_message_text("🔍 <b>Coin Analysis</b>\n\nPlease send the coin name like this:\n<code>BTC/USDT</code>\n\nOr simply type: <code>BTC</code>", 
                                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
         context.user_data['awaiting_coin'] = True
 
-    # --- 4. MANAGE COINS ---
+    # --- MANAGE COINS ---
     elif query.data == 'manage_coins':
         coins_list = "\n".join([f"• {coin}" for coin in tracked_coins])
         text = f"📊 <b>Tracked Coins ({len(tracked_coins)}):</b>\n{coins_list}\n\n"
         text += "<b>Add:</b> <code>/add DOGE</code>\n<b>Remove:</b> <code>/remove DOGE</code>"
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
-    # --- 5. SETTINGS ---
+    # --- SETTINGS ---
     elif query.data == 'settings':
         keyboard = [
             [InlineKeyboardButton(f"Core Strategy: {'🟢 ON' if FILTER_CORE else '🔴 OFF'}", callback_data='toggle_core')],
@@ -269,12 +274,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'toggle_rsi':
         FILTER_RSI = not FILTER_RSI; await button_handler(update, context)
 
-    # --- 6. HELP ---
+    # --- HELP ---
     elif query.data == 'help':
         help_text = (
             "ℹ️ <b>Terminal Guide</b>\n\n"
-            "1️⃣ <b>Scan Top 100:</b> Poori market ke top 100 coins scan karein.\n"
-            "2️⃣ <b>Active Trades:</b> Aapki live positions ka status.\n"
+            "1️⃣ <b>Scan Top 100:</b> Market ke top 100 coins scan karein.\n"
+            "2️⃣ <b>Active Trades:</b> Live positions ka status.\n"
             "3️⃣ <b>Analyze Coin:</b> Kisi ek coin ka manual analysis.\n"
             "4️⃣ <b>Manage Coins:</b> <code>/add</code> ya <code>/remove</code> se coins manage karein.\n\n"
             "<b>Strategy:</b> 1.5% SL, 3% TP1, Trailing SL to Breakeven."
@@ -282,7 +287,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='main_menu')]]), parse_mode='HTML')
 
 # ==========================================
-# 8. MESSAGE HANDLER (For Manual Coin Analysis)
+# 8. MESSAGE HANDLER (Manual Coin Analysis)
 # ==========================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -466,9 +471,10 @@ async def scan_market(context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='HTML')
 
     for trade_id, trade in list(active_trades.items()):
+        # FAST API FIX: fetch_ticker instead of fetch_ohlcv
         try:
-            current_price = exchange.fetch_ohlcv(trade['coin'], '1m', limit=1)[0][4]
-        except:
+            current_price = exchange.fetch_ticker(trade['coin'])['last']
+        except Exception:
             continue
 
         entry, sl, tp1, tp2, direction = trade['entry'], trade['sl'], trade['tp1'], trade['tp2'], trade['type']
