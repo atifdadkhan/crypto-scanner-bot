@@ -36,21 +36,20 @@ def fmt(price):
     else: return f"{price:.4f}"
 
 # ==========================================
-# 🛑 DYNAMIC SCANNER (Strict Crypto Only - Top 50)
+# 🛑 DYNAMIC SCANNER (Bulletproof Crypto Only)
 # ==========================================
 def get_dynamic_top_50():
     try:
         tickers = exchange.fetch_tickers()
         
-        # 🛑 Bitget Tokenized Stocks & Stablecoins ki mukammal list
-        blacklist = [
-            'USDC', 'FDUSD', 'TUSD', 'USDP', 'DAI', 'EUR', 
-            'RMU', 'RBE', 'RT', 'RVZ', 'RGE', 'RVO', 'RV', 'RKO', 'RPG', 'RMS', 
-            'RMA', 'RGS', 'RNU', 'RHD', 'RBX', 'RBA', 'RZS', 'RC', 'RCB', 'RPH',
-            'RQQQ', 'RAMZN', 'RAAPL', 'RSPCX', 'RAMD', 'RIWM', 'RAVGO', 'RHYG', 
-            'RSOXL', 'RBIL', 'RIEF', 'RIVV', 'REWZ', 'RSHV', 'RPLTR', 'RLLY', 
-            'RGEV', 'RCOST', 'RTLT', 'RCRWD'
+        # 🛡️ 1. Whitelist (Asal crypto jo 'R' se start hote hain)
+        r_crypto_whitelist = [
+            'RUNE', 'RNDR', 'RSR', 'ROSE', 'RPL', 'RIF', 'REN', 
+            'RVN', 'RBN', 'RLC', 'RAY', 'REEF', 'RAD', 'RARE', 'RSS3'
         ]
+        
+        # 🛑 2. Stablecoins (Inko trade nahi karna)
+        stablecoins = ['USDC', 'FDUSD', 'TUSD', 'USDP', 'DAI', 'EUR']
         
         valid_coins = {}
         
@@ -58,14 +57,18 @@ def get_dynamic_top_50():
             if k.endswith('/USDT') and v.get('quoteVolume'):
                 base_coin = k.replace('/USDT', '')
                 
-                # 1. Blacklist check
-                if base_coin in blacklist: 
+                # Stablecoins skip
+                if base_coin in stablecoins: 
                     continue
                 
-                # 2. Smart check for fake stock tokens (R + 2-4 letters)
-                if base_coin.startswith('R') and 2 <= len(base_coin) <= 4 and base_coin.isupper():
-                    if base_coin not in ['RUNE', 'RSR', 'RNDR', 'RIF', 'REN']: # Crypto exceptions
-                        continue
+                # Leveraged tokens skip (jaise BTC3L, ETH3S)
+                if '3L' in base_coin or '3S' in base_coin:
+                    continue
+                
+                # 🎯 THE ULTIMATE FIX: 'R' wale saare fake stocks block
+                # Agar 'R' se start hota hai aur whitelist mein nahi hai, toh reject.
+                if base_coin.startswith('R') and base_coin not in r_crypto_whitelist:
+                    continue
                 
                 valid_coins[k] = v
                 
@@ -73,6 +76,7 @@ def get_dynamic_top_50():
         return [k for k, v in sorted_pairs[:50]]
     except Exception as e:
         print(f"Error fetching top coins: {e}")
+        # Fallback list agar API fail ho jaye
         return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT']
 
 def is_trading_session():
@@ -131,7 +135,7 @@ def get_main_menu():
         "Welcome Boss! Main aapka personal trading assistant hoon.\n"
         "🛡️ <i>Whale Protection Active</i>\n"
         "🕒 <i>Session: 12 PM - 1 AM (PKT)</i>\n"
-        "🌍 <i>Auto-Scanning Top 50 Crypto Coins</i>\n"
+        "🌍 <i>Auto-Scanning Top 50 Pure Crypto Coins</i>\n"
         "🔓 <i>Trade Limit: Unlimited</i>"
     )
     return text, InlineKeyboardMarkup(keyboard)
@@ -504,7 +508,7 @@ def main():
     job_queue.run_repeating(scan_market, interval=600, first=10)
     job_queue.run_repeating(heartbeat_status, interval=10800, first=60)
 
-    print("Dynamic Pro Bot (Top 50 + No Limit) is running...")
+    print("Dynamic Pro Bot (Bulletproof Crypto) is running...")
     app_bot.run_polling()
 
 if __name__ == '__main__':
